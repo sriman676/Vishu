@@ -1,0 +1,18 @@
+{
+  "name": "@vishu/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": { "vishu": "dist/bin/vishu.js" },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc",
+    "dev": "tsx src/bin/vishu.ts",
+    "test": "node --test --import tsx"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
