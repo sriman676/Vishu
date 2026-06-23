@@ -5,8 +5,25 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { EventBus } from "../transport/events.js";
 import { SchedulerGate } from "./gate.js";
+import { attachNotificationSink } from "./notify.js";
+import { evalGate } from "./sensor.js";
 import { TriggerManager } from "./triggers.js";
 import { WorkflowStore } from "./workflows.js";
+
+test("resource sensor: pauses the gate when busy, resumes when idle", () => {
+  assert.equal(evalGate(0.99, 0.85), "paused");
+  assert.equal(evalGate(0.2, 0.85), "always_on");
+});
+
+test("notification sink: delivers system/notification events, ignores other system events", () => {
+  const bus = new EventBus();
+  const seen: unknown[] = [];
+  const off = attachNotificationSink(bus, (e) => seen.push(e.payload));
+  bus.publish({ domain: "system", type: "notification", payload: { msg: "hi" } });
+  bus.publish({ domain: "system", type: "other", payload: { msg: "skip" } });
+  off();
+  assert.deepEqual(seen, [{ msg: "hi" }]);
+});
 
 function setup(autonomy: "automatic" | "ask_every_time" = "automatic") {
   const store = new WorkflowStore(mkdtempSync(join(tmpdir(), "vishu-wf-")));

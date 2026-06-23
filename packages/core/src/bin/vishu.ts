@@ -1,13 +1,26 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { registerAgent } from "../agent/rpc.js";
+import { buildApp } from "../appbuilder/build.js";
+import { formatFindings } from "../appbuilder/security.js";
+import { type AppSpec, type InterviewTurn, interviewStep, persistSpec, specToMarkdown } from "../appbuilder/spec.js";
 import { AgentService } from "../agent/service.js";
 import { loadConfig } from "../config/config.js";
 import { registerAutomation } from "../automation/rpc.js";
 import { SchedulerGate } from "../automation/gate.js";
+import { attachNotificationSink } from "../automation/notify.js";
+import { startResourceGuard } from "../automation/sensor.js";
 import { TriggerManager } from "../automation/triggers.js";
 import { WorkflowStore } from "../automation/workflows.js";
+import { registerConnectors } from "../connectors/rpc.js";
+import { LocalConnector } from "../connectors/local.js";
+import { McpClient, type McpSampler, registerMcpTools } from "../connectors/mcp.js";
+import { WebhookConnector } from "../connectors/webhook.js";
+import type { Connector } from "../connectors/types.js";
 import { registerMemory } from "../memory/rpc.js";
+import { MODULES } from "../modules/all.js";
+import { loadModules } from "../modules/registry.js";
 import { MemoryStore } from "../memory/store.js";
 import { registerMemoryTools } from "../memory/tools.js";
 import { registerOrchestrationTools } from "../orchestration/tools.js";
@@ -37,6 +50,41 @@ function host(env = process.env): string {
   return env.VISHU_CORE_HOST || "127.0.0.1";
 }
 
+/** Connect MCP servers declared in VISHU_MCP_SERVERS (JSON: [{id,cmd,args?}]) and fold their tools in.
+ * A server that fails to start is logged and skipped — it must never take down the core. */
+async function connectMcpServers(tools: ToolRegistry, eventBus: typeof bus, sampler?: McpSampler): Promise<void> {
+  const raw = process.env.VISHU_MCP_SERVERS;
+  if (!raw) return;
+  let specs: { id: string; cmd: string; args?: string[] }[];
+  try {
+    specs = JSON.parse(raw) as typeof specs;
+  } catch {
+    process.stderr.write("[mcp] VISHU_MCP_SERVERS is not valid JSON; skipping\n");
+    return;
+  }
+  for (const s of specs) {
+    try {
+      const client = new McpClient(s.cmd, s.args ?? [], { sampler });
+      await client.start();
+      const names = await registerMcpTools(tools, client, s.id, eventBus);
+      process.stdout.write(`[mcp] ${s.id}: ${names.length} tool(s)\n`);
+    } catch (e) {
+      process.stderr.write(`[mcp] ${s.id} failed: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
+  }
+}
+
+/** Outbound webhook channels declared in VISHU_WEBHOOKS (JSON: {"channel":"https://hook"}). */
+function parseWebhooks(env = process.env): Record<string, string> {
+  if (!env.VISHU_WEBHOOKS) return {};
+  try {
+    return JSON.parse(env.VISHU_WEBHOOKS) as Record<string, string>;
+  } catch {
+    process.stderr.write("[connectors] VISHU_WEBHOOKS is not valid JSON; skipping\n");
+    return {};
+  }
+}
+
 function usageErr(usage: string): number {
   process.stderr.write(`usage: ${usage}\n`);
   return 1;
@@ -51,14 +99,15 @@ async function serve(): Promise<number> {
   const skills = new SkillIndex();
   skills.loadDir(config.paths.skillsDir);
   registerSkillTools(tools, skills);
+  const router = buildRouter(config.provider);
   const memory = new MemoryStore(
     config.paths.vaultDir,
     config.paths.memoryDbFile,
     join(config.paths.workspaceDir, "memory-events.log"),
+    router.canEmbed() ? (texts) => router.embed(texts) : undefined,
   );
   registerMemoryTools(tools, memory);
   registerMemory(registry, memory);
-  const router = buildRouter(config.provider);
   registerOrchestrationTools(tools, { router, model: config.provider.model });
   const agentService = new AgentService({
     router,
@@ -72,18 +121,39 @@ async function serve(): Promise<number> {
 
   // Phase 9: proactive automation — saved workflows + triggers on a 5s cron tick / events / files.
   const workflows = new WorkflowStore(join(config.paths.workspaceDir, "workflows"));
+  const gate = new SchedulerGate();
   const triggers = new TriggerManager({
     bus,
     store: workflows,
-    gate: new SchedulerGate(),
+    gate,
     autonomy: "automatic",
     run: async (step) => (await agentService.startTurn(undefined, step)).final,
     runLog: new RunLog(),
   });
   registerAutomation(registry, workflows, triggers);
   triggers.start();
+  startResourceGuard(gate); // throttle background work under CPU load
+  attachNotificationSink(bus); // surface trigger notifications (Phase 14 swaps in an OS toast)
 
-  const running = await startServer(registry, host(), config.port);
+  // Phase 10: connectors — inbound triage + outbound send RPC, MCP servers, realtime SSE stream.
+  const connectors = new Map<string, Connector>([["local", new LocalConnector()]]);
+  for (const [channel, url] of Object.entries(parseWebhooks())) connectors.set(channel, new WebhookConnector(channel, url));
+  registerConnectors(registry, { router, model: config.provider.model, memory, bus, runLog: new RunLog() }, connectors);
+  // MCP sampling: a server's sampling/createMessage runs through our Router and returns an MCP result.
+  const sampler: McpSampler = async (params) => {
+    const p = (params ?? {}) as { messages?: { role: string; content?: { text?: string } }[] };
+    const messages = (p.messages ?? []).map((m) => ({ role: m.role as "user" | "assistant" | "system", content: m.content?.text ?? "" }));
+    let text = "";
+    await router.chatStream({ model: config.provider.model, messages }, (d) => (text += d));
+    return { role: "assistant", content: { type: "text", text }, model: config.provider.model };
+  };
+  await connectMcpServers(tools, bus, sampler);
+
+  // Phase 12: optional modules — off by default, enabled by VISHU_MODULES; core is unaffected when off.
+  const modulesOn = await loadModules(MODULES, { tools, rpc: registry, bus, workspaceDir: config.paths.workspaceDir });
+  if (modulesOn.length) process.stdout.write(`[modules] enabled: ${modulesOn.join(", ")}\n`);
+
+  const running = await startServer(registry, host(), config.port, bus);
   const base = `http://${host()}:${running.port}`;
   process.stdout.write(`[serve] vishu ${version()} on ${base}\n`);
   process.stdout.write(`[serve] token: ${join(config.paths.workspaceDir, "core.token")}\n`);
@@ -126,6 +196,71 @@ async function agent(text: string): Promise<number> {
   return 0;
 }
 
+/** Phase 11 flagship: spec interview → user verifies → chunked secure build → security + gate report. */
+async function build(goal: string): Promise<number> {
+  const config = loadConfig();
+  mkdirSync(config.paths.actionDir, { recursive: true });
+  const router = buildRouter(config.provider);
+  const model = config.provider.model;
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const turns: InterviewTurn[] = [];
+    let spec: AppSpec | undefined;
+    for (let round = 0; round < 8 && !spec; round++) {
+      const step = await interviewStep(router, model, goal, turns);
+      if (step.kind === "spec") spec = step.spec;
+      else for (const q of step.questions) turns.push({ q, a: await rl.question(`? ${q}\n> `) });
+    }
+    if (!spec) {
+      process.stderr.write("[build] could not converge on a spec; try a more specific goal\n");
+      return 1;
+    }
+
+    process.stdout.write(`\n${specToMarkdown(spec)}\n\n`);
+    const answer = (await rl.question("Build this spec? [y/N] ")).trim().toLowerCase();
+    if (answer !== "y" && answer !== "yes") {
+      process.stdout.write("[build] aborted before any code\n");
+      return 0;
+    }
+
+    const memory = new MemoryStore(
+      config.paths.vaultDir,
+      config.paths.memoryDbFile,
+      join(config.paths.workspaceDir, "memory-events.log"),
+      router.canEmbed() ? (texts) => router.embed(texts) : undefined,
+    );
+    await persistSpec(memory, spec);
+    memory.close();
+
+    process.stdout.write("[build] building…\n");
+    const report = await buildApp(
+      {
+        router,
+        model,
+        policy: makePolicy("full", config.paths.actionDir),
+        registry: registerBuiltins(new ToolRegistry()),
+        repoDir: config.paths.actionDir,
+        runLog: new RunLog(),
+      },
+      spec,
+    );
+
+    process.stdout.write(
+      [
+        "",
+        `[build] ${report.ok ? "DONE" : "BLOCKED"} — ${report.chunks.length} chunk(s), ${report.remediations} security remediation(s)`,
+        `security: ${formatFindings(report.findings)}`,
+        `gate: ${report.gate.ok ? "pass" : report.gate.issues.join("; ")}`,
+        `owasp review (advisory): ${report.review || "none"}`,
+        "",
+      ].join("\n"),
+    );
+    return report.ok ? 0 : 1;
+  } finally {
+    rl.close();
+  }
+}
+
 async function rpc(method: string, paramsJson?: string): Promise<number> {
   const config = loadConfig();
   const token = readToken(config.paths.workspaceDir);
@@ -157,6 +292,11 @@ async function main(argv: string[]): Promise<number> {
     if (!text) return usageErr("vishu agent <task>");
     return agent(text);
   }
+  if (cmd === "build") {
+    const text = argv.slice(1).join(" ");
+    if (!text) return usageErr("vishu build <what to build>");
+    return build(text);
+  }
   if (cmd === "rpc") {
     const method = argv[1];
     if (!method) return usageErr("vishu rpc <method> [jsonParams]");
@@ -173,6 +313,7 @@ async function main(argv: string[]): Promise<number> {
       "  vishu serve                  start the JSON-RPC core (loopback)",
       "  vishu chat <message>         one-shot chat via the configured provider",
       "  vishu agent <task>           run the tool loop (build/run inside action_dir)",
+      "  vishu build <what>           guided secure app builder: spec interview → build → pentest",
       "  vishu rpc <method> [json]    call a method on a running core",
       "",
     ].join("\n"),

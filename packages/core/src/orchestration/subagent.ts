@@ -29,6 +29,8 @@ export interface SubagentOptions {
   tier?: Tier;
   /** Dev/test validation run against the worktree after the subagent finishes. */
   validate?: (worktreeDir: string) => Promise<ValidationResult>;
+  /** On success, commit the worktree and merge its branch back into `repoDir` (harvest the winner). */
+  harvest?: boolean;
   maxIterations?: number;
   runLog?: RunLog;
 }
@@ -39,6 +41,8 @@ export interface SubagentOutcome {
   final: string;
   validation: ValidationResult;
   worktree: string;
+  /** True if the winning branch's changes were merged back into the action repo (harvest). */
+  merged: boolean;
 }
 
 export class NoParentContextError extends Error {
@@ -83,24 +87,48 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentOutcom
       { role: "system" as const, content: `${opts.archetype.system}\n\nParent context:\n${opts.parentContext}` },
       { role: "user" as const, content: opts.task },
     ];
+    const terminal = new Terminal(worktree);
     const result = await runToolLoop(
-      { router: opts.router, registry, policy, terminal: new Terminal(worktree), model: opts.model, runLog: opts.runLog },
+      { router: opts.router, registry, policy, terminal, model: opts.model, runLog: opts.runLog },
       messages,
       opts.maxIterations ?? 6,
-    );
+    ).finally(() => terminal.close());
     const validation = opts.validate ? await opts.validate(worktree) : { ok: true, output: "no validator" };
-    opts.runLog?.log("subagent_done", `${opts.archetype.name} ok=${validation.ok}`);
-    return { ok: validation.ok, archetype: opts.archetype.name, final: result.final, validation, worktree };
+    let merged = false;
+    if (validation.ok && opts.harvest) merged = harvestBranch(opts.repoDir, worktree, branch, opts.runLog);
+    opts.runLog?.log("subagent_done", `${opts.archetype.name} ok=${validation.ok}${merged ? " merged" : ""}`);
+    return { ok: validation.ok, archetype: opts.archetype.name, final: result.final, validation, worktree, merged };
   } finally {
     git(opts.repoDir, "worktree", "remove", "--force", worktree);
     git(opts.repoDir, "branch", "-D", branch);
   }
 }
 
+/** Commit the worktree's work and merge its branch into the action repo. Best-effort: a merge fault
+ * (e.g. conflict) is logged and the branch is left for inspection — the caller already has the result.
+ * ponytail: --no-ff merge, no conflict resolution; if both branches touch the same files, resolve by
+ * hand. Single-winner harvest rarely conflicts (only one branch merges). */
+function harvestBranch(repoDir: string, worktree: string, branch: string, runLog?: RunLog): boolean {
+  git(worktree, "add", "-A");
+  git(worktree, "commit", "-m", `vishu: harvest ${branch}`, "--allow-empty");
+  const merge = git(repoDir, "merge", "--no-ff", "--no-edit", branch);
+  if (merge.code !== 0) {
+    git(repoDir, "merge", "--abort");
+    runLog?.log("branch_harvest_conflict", `${branch}: ${merge.out.slice(0, 200)}`);
+    return false;
+  }
+  return true;
+}
+
 /** Default dev/test validator: run a shell command in the worktree; non-zero exit = branch failed. */
 export function commandValidator(command: string): (worktreeDir: string) => Promise<ValidationResult> {
   return async (worktreeDir) => {
-    const out = await new Terminal(worktreeDir).exec(command);
-    return { ok: out.exitCode === 0, output: out.stdout };
+    const term = new Terminal(worktreeDir);
+    try {
+      const out = await term.exec(command);
+      return { ok: out.exitCode === 0, output: out.stdout };
+    } finally {
+      term.close();
+    }
   };
 }

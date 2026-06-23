@@ -42,7 +42,12 @@ export interface Provider {
   chat(req: ChatRequest): Promise<ChatResponse>;
   /** Stream sinks surface partial output incrementally; returns the assembled final response. */
   chatStream(req: ChatRequest, onDelta: OnDelta): Promise<ChatResponse>;
+  /** Optional embeddings for semantic memory recall (Phase 7). Not every backend supports it. */
+  embed?(texts: string[]): Promise<number[][]>;
 }
+
+/** A function that turns texts into vectors — satisfied by Router.embed; consumed by memory recall. */
+export type Embedder = (texts: string[]) => Promise<number[][]>;
 
 export class ProviderError extends Error {
   constructor(

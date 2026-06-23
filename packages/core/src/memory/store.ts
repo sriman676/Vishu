@@ -1,6 +1,15 @@
+import type { Embedder } from "../providers/types.js";
 import { RunLog } from "../reliability/runlog.js";
 import { MemoryIndex } from "./index.js";
 import { extractLinks, slugify, Vault, type Note } from "./vault.js";
+
+/** Age-based confidence decay: a fact halves its ranking weight every HALFLIFE days, so newer facts
+ * win near-ties. ponytail: simple exponential half-life; tune HALFLIFE if recall favours stale notes. */
+const DECAY_HALFLIFE_DAYS = 30;
+function decay(updated: string): number {
+  const ageDays = (Date.now() - Date.parse(updated)) / 86_400_000;
+  return Number.isFinite(ageDays) && ageDays > 0 ? 0.5 ** (ageDays / DECAY_HALFLIFE_DAYS) : 1;
+}
 
 export interface PutInput {
   content: string;
@@ -49,12 +58,25 @@ export class MemoryStore {
     private readonly vaultDir: string,
     private readonly dbFile: string,
     eventLogFile?: string,
+    /** Optional: enables semantic recall. Absent = FTS + lexical + smart-walk only (no regression). */
+    private readonly embedder?: Embedder,
   ) {
     this.vault = new Vault(vaultDir);
     this.index = new MemoryIndex(dbFile);
     this.log = new RunLog(eventLogFile);
     // Self-heal: a fresh/blank index next to a populated vault rebuilds itself on open.
     if (this.index.isEmpty() && this.vault.list().length) this.reindex();
+  }
+
+  /** Embed a note body and store its vector (guarded; embedding faults degrade recall, never lose data). */
+  private async embedNote(note: Note): Promise<void> {
+    if (!this.embedder || note.supersededBy) return;
+    try {
+      const [vec] = await this.embedder([`${note.subject ?? ""} ${note.body}`]);
+      if (vec) this.guard(() => this.index.upsertVector(note.name, vec), undefined);
+    } catch (e) {
+      this.log.log("memory_embed_error", e instanceof Error ? e.message : String(e));
+    }
   }
 
   /** Run an index mutation/read under the breaker; on repeated failure, degrade (vault stays truth). */
@@ -83,7 +105,7 @@ export class MemoryStore {
   /** Write a memory. If `subject` matches an existing live note, that note is superseded (kept on
    * disk with a pointer, dropped from active recall). ponytail: contradiction = exact subject match;
    * semantic contradiction detection needs a model — add when subject-keying proves too coarse. */
-  put(input: PutInput): Note {
+  async put(input: PutInput): Promise<Note> {
     const now = new Date().toISOString();
     const note: Note = {
       name: this.uniqueName(input.subject ?? input.content),
@@ -97,6 +119,7 @@ export class MemoryStore {
     if (input.subject) this.supersedePrior(input.subject, note.name);
     this.vault.write(note);
     this.guard(() => this.index.upsert(note), undefined);
+    await this.embedNote(note);
     this.log.log("memory_put", `${note.name} (${note.type})`);
     return note;
   }
@@ -114,15 +137,25 @@ export class MemoryStore {
 
   /** Hybrid recall: FTS/lexical match, then a one-hop smart-walk over [[links]] to gather context.
    * Superseded notes are excluded; newest wins on ties. Returns only the gathered notes, not a dump. */
-  recall(query: string, limit = 5): RecallResult {
+  async recall(query: string, limit = 5): Promise<RecallResult> {
     const hits = this.guard(() => this.index.search(query, limit * 2), []);
+
+    // Semantic overlay: blend cosine into FTS hits and surface vector-only candidates FTS missed.
+    const sem = await this.semantic(query, limit * 2);
+    const candidates = new Set(hits.map((h) => h.name));
+    for (const name of sem.keys()) candidates.add(name);
+    const ftsScore = new Map(hits.map((h) => [h.name, h.superseded ? -1 : h.score]));
+
     const gathered = new Map<string, Recalled>();
 
-    for (const hit of hits) {
-      if (hit.superseded) continue;
-      const note = this.vault.read(hit.name);
+    for (const name of candidates) {
+      const note = this.vault.read(name);
       if (!note || note.supersededBy) continue;
-      const score = 0.6 * hit.score + 0.4 * lexicalOverlap(query, `${note.subject ?? ""} ${note.body}`);
+      const fts = ftsScore.get(name) ?? 0;
+      if (fts < 0) continue; // superseded per the index
+      const lex = lexicalOverlap(query, `${note.subject ?? ""} ${note.body}`);
+      const cos = Math.max(0, sem.get(name) ?? 0);
+      const score = (0.5 * fts + 0.3 * lex + 0.2 * cos) * decay(note.updated);
       gathered.set(note.name, { name: note.name, type: note.type, body: note.body, score, via: "match" });
       // smart-walk: one hop along wikilinks, gather neighbors not already matched.
       for (const target of note.links) {
@@ -133,7 +166,7 @@ export class MemoryStore {
           name: neighbor.name,
           type: neighbor.type,
           body: neighbor.body,
-          score: 0.4 * lexicalOverlap(query, `${neighbor.subject ?? ""} ${neighbor.body}`),
+          score: 0.4 * lexicalOverlap(query, `${neighbor.subject ?? ""} ${neighbor.body}`) * decay(neighbor.updated),
           via: "link",
         });
       }
@@ -142,6 +175,23 @@ export class MemoryStore {
     const notes = [...gathered.values()].sort((a, b) => b.score - a.score).slice(0, limit);
     const text = notes.map((n) => `## ${n.name} (${n.type})\n${n.body}`).join("\n\n");
     return { notes, text };
+  }
+
+  /** Cosine scores for the query over stored vectors (empty when no embedder / no vectors). */
+  private async semantic(query: string, _limit: number): Promise<Map<string, number>> {
+    if (!this.embedder || !this.guard(() => this.index.hasVectors(), false)) return new Map();
+    try {
+      const [vec] = await this.embedder([query]);
+      return vec ? this.guard(() => this.index.semanticScores(vec), new Map<string, number>()) : new Map();
+    } catch (e) {
+      this.log.log("memory_embed_error", e instanceof Error ? e.message : String(e));
+      return new Map();
+    }
+  }
+
+  /** All current (non-superseded) notes — for rollups / inspection. */
+  notes(): Note[] {
+    return this.vault.list().filter((n) => !n.supersededBy);
   }
 
   /** Re-derive the whole index from the markdown vault (resets the breaker). */

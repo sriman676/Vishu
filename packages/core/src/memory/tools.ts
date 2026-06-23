@@ -17,7 +17,7 @@ export function registerMemoryTools(registry: ToolRegistry, store: MemoryStore):
       required: ["content"],
     },
     run: async (args) => {
-      const note = store.put({
+      const note = await store.put({
         content: String(args.content ?? ""),
         subject: args.subject ? String(args.subject) : undefined,
         type: args.type ? String(args.type) : undefined,
@@ -31,7 +31,7 @@ export function registerMemoryTools(registry: ToolRegistry, store: MemoryStore):
     description: "Recall saved memories relevant to a query (hybrid search + link traversal).",
     parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
     run: async (args) => {
-      const { text } = store.recall(String(args.query ?? ""));
+      const { text } = await store.recall(String(args.query ?? ""));
       return text || "no relevant memories";
     },
   });

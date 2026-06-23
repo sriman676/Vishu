@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { checkBearer } from "./auth.js";
+import type { EventBus } from "./events.js";
 import { type JsonRpcRequest, type Registry } from "./rpc.js";
 
 export interface RunningServer {
@@ -19,7 +20,7 @@ async function readBody(req: import("node:http").IncomingMessage, limit = 1_000_
 }
 
 /** Start the JSON-RPC + health HTTP server, bound to loopback only. */
-export function startServer(registry: Registry, host: string, port: number): Promise<RunningServer> {
+export function startServer(registry: Registry, host: string, port: number, eventBus?: EventBus): Promise<RunningServer> {
   const server: Server = createServer((req, res) => {
     void (async () => {
       const send = (code: number, body: unknown) => {
@@ -30,6 +31,18 @@ export function startServer(registry: Registry, host: string, port: number): Pro
       // /health is unauthenticated liveness.
       if (req.method === "GET" && req.url === "/health") {
         return send(200, { ok: true, result: { status: "ok" } });
+      }
+
+      // /events: SSE realtime stream of bus events (tool:sync, notifications). Auth via ?token=.
+      if (req.method === "GET" && req.url?.startsWith("/events")) {
+        const token = new URL(req.url, "http://x").searchParams.get("token");
+        if (!checkBearer(token ? `Bearer ${token}` : undefined)) return send(401, { error: "Unauthorized" });
+        if (!eventBus) return send(404, { error: "no event bus" });
+        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+        res.flushHeaders(); // send headers now so clients connect before the first event (no deadlock)
+        const off = eventBus.subscribe((e) => res.write(`data: ${JSON.stringify(e)}\n\n`));
+        req.on("close", off);
+        return;
       }
 
       if (req.method !== "POST" || req.url !== "/rpc") {
@@ -60,7 +73,11 @@ export function startServer(registry: Registry, host: string, port: number): Pro
       const boundPort = typeof addr === "object" && addr ? addr.port : port;
       resolve({
         port: boundPort,
-        close: () => new Promise<void>((res) => server.close(() => res())),
+        close: () =>
+          new Promise<void>((res) => {
+            server.close(() => res());
+            server.closeAllConnections?.(); // force-close keep-alive/SSE sockets so close() resolves
+          }),
       });
     });
   });

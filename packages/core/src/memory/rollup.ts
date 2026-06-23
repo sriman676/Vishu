@@ -1,0 +1,30 @@
+import type { Note } from "./vault.js";
+import type { MemoryStore } from "./store.js";
+
+export interface RollupOptions {
+  /** Only roll up notes updated at/after this epoch-ms (default: all current notes). */
+  since?: number;
+  /** Rollup note subject (default: session-rollup-<date>). */
+  subject?: string;
+  /** Optional LLM summariser over the extracted digest; default keeps the digest as-is (extractive). */
+  summarize?: (digest: string) => Promise<string>;
+}
+
+function firstSentence(body: string, cap = 160): string {
+  const s = body.trim().split(/(?<=[.!?])\s/)[0] ?? body.trim();
+  return s.length > cap ? `${s.slice(0, cap)}…` : s;
+}
+
+/** Memory Tree rollup: condense the vault's current notes into one summary note so next session reads
+ * the rollup instead of every note (token-cheap). Extractive by default (one line per note, linked via
+ * [[wikilinks]] so the graph stays intact); pass `summarize` to compress further with a model.
+ * ponytail: extractive digest, no model required; the `summarize` hook is the upgrade for real prose. */
+export async function rollupSession(store: MemoryStore, opts: RollupOptions = {}): Promise<Note> {
+  const notes = store
+    .notes()
+    .filter((n) => n.type !== "rollup" && (opts.since === undefined || Date.parse(n.updated) >= opts.since));
+  const digest = notes.map((n) => `- [[${n.name}]] (${n.type}): ${firstSentence(n.body)}`).join("\n");
+  const body = opts.summarize ? await opts.summarize(digest) : digest;
+  const subject = opts.subject ?? `session-rollup-${new Date().toISOString().slice(0, 10)}`;
+  return store.put({ type: "rollup", subject, content: `Session rollup (${notes.length} notes):\n${body}` });
+}

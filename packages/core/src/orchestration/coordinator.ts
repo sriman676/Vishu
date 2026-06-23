@@ -20,6 +20,8 @@ export interface CoordinatorOptions {
    * decide pass/fail per hypothesis. Absent = branches auto-pass (first one wins). */
   validateCommand?: string;
   validate?: (hypothesis: string, worktreeDir: string) => Promise<ValidationResult>;
+  /** Merge the winning branch back into the action repo (default true). */
+  harvest?: boolean;
 }
 
 export interface BranchResult {
@@ -36,6 +38,8 @@ export interface OrchestrationResult {
   branches: BranchResult[];
   /** Lessons harvested from pruned branches, backpropagated into later branches and the final answer. */
   learnings: string[];
+  /** True if the chosen branch's changes were merged back into the action repo. */
+  merged: boolean;
 }
 
 /** Strip "1. ", "- ", "* " and blanks; the provider's free-text list → discrete hypotheses. */
@@ -81,6 +85,7 @@ export class Coordinator {
         model: this.deps.model,
         repoDir: this.deps.repoDir,
         runLog: this.deps.runLog,
+        harvest: opts.harvest ?? true,
         validate: opts.validate
           ? (wt) => opts.validate!(hypothesis, wt)
           : opts.validateCommand
@@ -90,9 +95,9 @@ export class Coordinator {
       branches.push({ hypothesis, ok: outcome.ok, final: outcome.final, output: outcome.validation.output });
 
       if (outcome.ok) {
-        this.deps.runLog?.log("branch_harvest", hypothesis);
+        this.deps.runLog?.log("branch_harvest", `${hypothesis}${outcome.merged ? " (merged)" : ""}`);
         const final = learnings.length ? `${outcome.final}\n\n(Backpropagated learnings:\n${learnings.join("\n")})` : outcome.final;
-        return { ok: true, final, chosen: hypothesis, branches, learnings };
+        return { ok: true, final, chosen: hypothesis, branches, learnings, merged: outcome.merged };
       }
 
       // prune: record why so later branches (and the caller) learn from it.
@@ -106,6 +111,7 @@ export class Coordinator {
       final: `All ${branches.length} approach(es) failed.\n${learnings.join("\n")}`,
       branches,
       learnings,
+      merged: false,
     };
   }
 }

@@ -40,7 +40,36 @@ export class MemoryIndex {
         links TEXT NOT NULL DEFAULT '[]'
       );
       CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(name UNINDEXED, subject, body);
+      CREATE TABLE IF NOT EXISTS vectors(name TEXT PRIMARY KEY, dim INTEGER NOT NULL, vec BLOB NOT NULL);
     `);
+  }
+
+  hasVectors(): boolean {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM vectors").get() as { n: number }).n > 0;
+  }
+
+  upsertVector(name: string, vec: number[]): void {
+    const buf = Buffer.from(new Float32Array(vec).buffer);
+    this.db.prepare("INSERT OR REPLACE INTO vectors(name, dim, vec) VALUES(?,?,?)").run(name, vec.length, buf);
+  }
+
+  /** Cosine of `query` against every stored vector → name→score in [-1,1].
+   * ponytail: linear scan over all vectors — fine for a personal vault; add an ANN index if it grows huge. */
+  semanticScores(query: number[]): Map<string, number> {
+    const qn = Math.hypot(...query) || 1;
+    const rows = this.db.prepare("SELECT name, vec FROM vectors").all() as { name: string; vec: Uint8Array }[];
+    const out = new Map<string, number>();
+    for (const r of rows) {
+      const v = new Float32Array(r.vec.buffer, r.vec.byteOffset, r.vec.byteLength / 4);
+      let dot = 0;
+      let vn = 0;
+      for (let i = 0; i < v.length && i < query.length; i++) {
+        dot += v[i]! * query[i]!;
+        vn += v[i]! * v[i]!;
+      }
+      out.set(r.name, dot / (qn * (Math.sqrt(vn) || 1)));
+    }
+    return out;
   }
 
   isEmpty(): boolean {
@@ -62,11 +91,13 @@ export class MemoryIndex {
   remove(name: string): void {
     this.db.prepare("DELETE FROM notes WHERE name = ?").run(name);
     this.db.prepare("DELETE FROM notes_fts WHERE name = ?").run(name);
+    this.db.prepare("DELETE FROM vectors WHERE name = ?").run(name);
   }
 
-  /** Drop everything and re-derive from the vault — the "delete the index, lose nothing" path. */
+  /** Drop everything and re-derive from the vault — the "delete the index, lose nothing" path.
+   * Vectors are dropped too; recall re-embeds lazily (semantic is a best-effort overlay on FTS). */
   rebuild(notes: Note[]): void {
-    this.db.exec("DELETE FROM notes; DELETE FROM notes_fts;");
+    this.db.exec("DELETE FROM notes; DELETE FROM notes_fts; DELETE FROM vectors;");
     for (const note of notes) this.upsert(note);
   }
 

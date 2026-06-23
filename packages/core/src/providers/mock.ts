@@ -14,6 +14,24 @@ export class EchoProvider implements Provider {
     onDelta(res.content);
     return res;
   }
+
+  /** Deterministic token-hash embedding: shared tokens → higher cosine. Lets semantic recall run
+   * offline with no keys. ponytail: not a real semantic model — swap in a provider embedding for
+   * meaning beyond literal token overlap. */
+  async embed(texts: string[]): Promise<number[][]> {
+    const dim = 64;
+    return texts.map((t) => {
+      const v = new Array<number>(dim).fill(0);
+      for (const tok of t.toLowerCase().match(/[a-z0-9]+/g) ?? []) {
+        let h = 0;
+        for (const ch of tok) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+        const i = h % dim;
+        v[i] = (v[i] ?? 0) + 1;
+      }
+      const norm = Math.hypot(...v) || 1;
+      return v.map((x) => x / norm);
+    });
+  }
 }
 
 /** Returns a scripted sequence of responses/errors — used to test failover and the tool loop. */

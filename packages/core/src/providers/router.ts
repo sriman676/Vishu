@@ -19,6 +19,26 @@ export class Router {
     return this.run((p) => p.chatStream(req, onDelta));
   }
 
+  /** True if any endpoint can embed — lets memory decide whether to enable semantic recall. */
+  canEmbed(): boolean {
+    return this.endpoints.some((p) => p.embed);
+  }
+
+  /** Embed texts, skipping endpoints without embeddings and rotating on transient errors. */
+  async embed(texts: string[]): Promise<number[][]> {
+    let lastErr: unknown;
+    for (const ep of this.endpoints) {
+      if (!ep.embed) continue;
+      try {
+        return await ep.embed(texts);
+      } catch (e) {
+        if (!isTransient(e)) throw e;
+        lastErr = e;
+      }
+    }
+    throw lastErr ?? new Error("[router] no provider supports embeddings");
+  }
+
   private async run<T>(call: (p: Provider) => Promise<T>): Promise<T> {
     let lastErr: unknown;
     for (const ep of this.endpoints) {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -9,8 +9,19 @@ import { makePolicy } from "../security/policy.js";
 import { registerBuiltins } from "../tools/builtins.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { ARCHETYPES, narrowRegistry, narrowTier } from "./archetypes.js";
+import { council } from "./council.js";
 import { Coordinator } from "./coordinator.js";
 import { NoParentContextError, runSubagent } from "./subagent.js";
+
+test("council: members answer, judge picks the winner", async () => {
+  const memberA = { router: new Router([new ScriptedProvider([{ content: "answer A", finish: "stop" }])]), model: "m1" };
+  const memberB = { router: new Router([new ScriptedProvider([{ content: "answer B", finish: "stop" }])]), model: "m2" };
+  const judge = { router: new Router([new ScriptedProvider([{ content: "1", finish: "stop" }])]), model: "judge" };
+  const res = await council([memberA, memberB], "what is best?", { judge });
+  assert.equal(res.answers.length, 2);
+  assert.equal(res.chosenIndex, 1);
+  assert.equal(res.chosen, "answer B");
+});
 
 test("inherit-and-narrow: tier only drops, tools are parent ∩ archetype", () => {
   assert.equal(narrowTier("supervised", "full"), "supervised"); // can't widen above parent
@@ -68,4 +79,26 @@ test("orchestrated request fans out, prunes a failed branch, returns one result"
   assert.equal(result.learnings.length, 1); // one lesson backpropagated
   assert.match(result.final, /built it the B way/);
   assert.match(result.final, /Backpropagated learnings/); // pruned-branch lesson carried into the result
+});
+
+test("harvest: the winning branch's work is merged back into the action repo", async () => {
+  const repoDir = mkdtempSync(join(tmpdir(), "vishu-harvest-"));
+  const outcome = await runSubagent({
+    archetype: ARCHETYPES.coder!,
+    task: "do the thing",
+    parentContext: "ctx",
+    parentPolicy: makePolicy("full", repoDir),
+    parentRegistry: registerBuiltins(new ToolRegistry()),
+    router: new Router([new EchoProvider()]),
+    model: "mock",
+    repoDir,
+    harvest: true,
+    // validation stands in for the subagent's build: drop an artifact in the worktree, then pass.
+    validate: async (wt) => {
+      writeFileSync(join(wt, "artifact.txt"), "winner");
+      return { ok: true, output: "built" };
+    },
+  });
+  assert.equal(outcome.merged, true);
+  assert.equal(readFileSync(join(repoDir, "artifact.txt"), "utf8"), "winner"); // merged into the repo
 });

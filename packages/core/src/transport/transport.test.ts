@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { buildRegistry } from "./all.js";
 import { initToken } from "./auth.js";
 import { rpcCall } from "./client.js";
+import { EventBus } from "./events.js";
 import { startServer } from "./server.js";
 
 test("health_snapshot round-trips over RPC with a valid token", async () => {
@@ -19,6 +20,26 @@ test("health_snapshot round-trips over RPC with a valid token", async () => {
 
     const missing = await rpcCall(base, token, "vishu.nope");
     assert.equal(missing.error?.code, -32601);
+  } finally {
+    await server.close();
+  }
+});
+
+test("SSE /events streams bus events to an authenticated client and rejects without a token", async () => {
+  const token = initToken(mkdtempSync(join(tmpdir(), "vishu-")));
+  const bus = new EventBus();
+  const server = await startServer(buildRegistry("9.9.9", 0), "127.0.0.1", 0, bus);
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    assert.equal((await fetch(`${base}/events`)).status, 401); // no token
+
+    const res = await fetch(`${base}/events?token=${token}`);
+    assert.equal(res.status, 200);
+    const reader = res.body!.getReader();
+    bus.publish({ domain: "tool", type: "sync", payload: { server: "x", tools: ["x__a"] } });
+    const { value } = await reader.read();
+    assert.match(new TextDecoder().decode(value), /"type":"sync"/);
+    await reader.cancel();
   } finally {
     await server.close();
   }

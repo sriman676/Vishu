@@ -5,6 +5,8 @@ export interface OpenAIConfig {
   name?: string;
   baseUrl: string;
   apiKey: string;
+  /** Embeddings model for semantic recall (Phase 7); defaults to a small OpenAI-style model. */
+  embedModel?: string;
 }
 
 interface OAChoice {
@@ -120,5 +122,16 @@ export class OpenAICompatibleProvider implements Provider {
       }
     }
     return { content, finish };
+  }
+
+  async embed(texts: string[]): Promise<number[][]> {
+    const res = await fetch(`${this.cfg.baseUrl}/embeddings`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ model: this.cfg.embedModel ?? "text-embedding-3-small", input: texts }),
+    });
+    if (!res.ok) throw statusError(res.status, await res.text());
+    const json = (await res.json()) as { data?: { embedding: number[] }[] };
+    return (json.data ?? []).map((d) => d.embedding);
   }
 }
