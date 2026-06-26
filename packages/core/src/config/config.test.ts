@@ -57,3 +57,27 @@ test("absent multi-provider config yields empty providers/roles", () => {
   assert.deepEqual(cfg.providers, {});
   assert.deepEqual(cfg.roles, {});
 });
+
+test("preset: VISHU_PROVIDER=gemini → OpenAI adapter + Google endpoint + gemini model", () => {
+  const cfg = loadConfig({ VISHU_PROVIDER: "gemini", VISHU_API_KEY: "k1" } as NodeJS.ProcessEnv);
+  assert.equal(cfg.provider.type, "openai");
+  assert.equal(cfg.provider.baseUrl, "https://generativelanguage.googleapis.com/v1beta/openai");
+  assert.equal(cfg.provider.model, "gemini-2.0-flash");
+  assert.deepEqual(cfg.provider.apiKeys, ["k1"]);
+});
+
+test("auto-detect: a standard provider env var sets the provider + key(s) with no VISHU_PROVIDER", () => {
+  const o = loadConfig({ OPENAI_API_KEY: "sk-abc" } as NodeJS.ProcessEnv);
+  assert.equal(o.provider.type, "openai");
+  assert.deepEqual(o.provider.apiKeys, ["sk-abc"]);
+
+  const g = loadConfig({ GEMINI_API_KEY: "g-1,g-2" } as NodeJS.ProcessEnv);
+  assert.equal(g.provider.type, "openai"); // gemini preset → openai adapter
+  assert.equal(g.provider.model, "gemini-2.0-flash");
+  assert.deepEqual(g.provider.apiKeys, ["g-1", "g-2"]); // N keys from the standard env var
+});
+
+test("precedence: explicit VISHU_API_KEY beats a standard env var", () => {
+  const cfg = loadConfig({ VISHU_PROVIDER: "openai", VISHU_API_KEY: "explicit", OPENAI_API_KEY: "ignored" } as NodeJS.ProcessEnv);
+  assert.deepEqual(cfg.provider.apiKeys, ["explicit"]);
+});

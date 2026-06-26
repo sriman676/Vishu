@@ -49,28 +49,65 @@ const DEFAULT_BASE_URL: Record<ProviderType, string> = {
   ollama: "http://127.0.0.1:11434",
 };
 
-function resolveProvider(
+/** Friendly provider presets → which adapter + endpoint + default model. Lets `VISHU_PROVIDER=gemini`
+ * (etc.) "just work" through the OpenAI-compatible adapter with no manual base-url/model wiring. */
+const PRESETS: Record<string, { type: ProviderType; baseUrl: string; model: string }> = {
+  gemini: { type: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.0-flash" },
+  openrouter: { type: "openai", baseUrl: "https://openrouter.ai/api/v1", model: "openai/gpt-4o-mini" },
+  groq: { type: "openai", baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
+  deepseek: { type: "openai", baseUrl: "https://api.deepseek.com", model: "deepseek-chat" },
+};
+
+/** Standard provider env-var names, scanned in order to auto-detect the provider + key when
+ * VISHU_PROVIDER is unset. First one present wins. Each may hold a comma-separated list (N keys). */
+const ENV_KEYS: { provider: string; env: string }[] = [
+  { provider: "anthropic", env: "ANTHROPIC_API_KEY" },
+  { provider: "openai", env: "OPENAI_API_KEY" },
+  { provider: "gemini", env: "GEMINI_API_KEY" },
+  { provider: "gemini", env: "GOOGLE_API_KEY" },
+  { provider: "openrouter", env: "OPENROUTER_API_KEY" },
+  { provider: "groq", env: "GROQ_API_KEY" },
+  { provider: "deepseek", env: "DEEPSEEK_API_KEY" },
+];
+
+/** CSV or single value → trimmed list. Comma-separated = N keys for failover. */
+function splitKeys(v?: string): string[] {
+  return v ? v.split(",").map((k) => k.trim()).filter(Boolean) : [];
+}
+
+export function resolveProvider(
   env: NodeJS.ProcessEnv,
   file: { provider?: Partial<ProviderConfig> & { apiKeys?: KeyEntry[] } },
 ): ProviderConfig {
-  const type = (env.VISHU_PROVIDER || file.provider?.type || "mock") as ProviderType;
-  // Env keys (CSV or single) win over file keys; env can't carry labels, so they get defaults.
-  const entries: KeyEntry[] = env.VISHU_API_KEYS
-    ? env.VISHU_API_KEYS.split(",").map((k) => k.trim()).filter(Boolean)
+  // Auto-detect: with no explicit provider, pick the first standard provider env var that's set.
+  const detected = ENV_KEYS.find((e) => env[e.env]);
+  const name = env.VISHU_PROVIDER || file.provider?.type || detected?.provider || "mock";
+
+  // A friendly preset (gemini/openrouter/…) resolves to an adapter type + endpoint + default model.
+  const preset = PRESETS[name];
+  const type = (preset?.type ?? name) as ProviderType;
+
+  // Keys, by precedence: VISHU_API_KEYS, VISHU_API_KEY, the provider's standard env var, then file.
+  const stdEnv = ENV_KEYS.find((e) => e.provider === name)?.env;
+  const entries: KeyEntry[] = splitKeys(env.VISHU_API_KEYS).length
+    ? splitKeys(env.VISHU_API_KEYS)
     : env.VISHU_API_KEY
       ? [env.VISHU_API_KEY]
-      : file.provider?.apiKeys ?? [];
+      : stdEnv && env[stdEnv]
+        ? splitKeys(env[stdEnv])
+        : file.provider?.apiKeys ?? [];
+
   const apiKeys: string[] = [];
   const keyLabels: string[] = [];
   entries.forEach((e, i) => {
-    const key = typeof e === "string" ? e : e.key;
-    apiKeys.push(key);
+    apiKeys.push(typeof e === "string" ? e : e.key);
     keyLabels.push((typeof e === "string" ? undefined : e.label) || defaultLabel(i));
   });
+
   return {
     type,
-    model: env.VISHU_MODEL || file.provider?.model || DEFAULT_MODEL[type],
-    baseUrl: env.VISHU_BASE_URL || file.provider?.baseUrl || DEFAULT_BASE_URL[type],
+    model: env.VISHU_MODEL || file.provider?.model || preset?.model || DEFAULT_MODEL[type],
+    baseUrl: env.VISHU_BASE_URL || file.provider?.baseUrl || preset?.baseUrl || DEFAULT_BASE_URL[type],
     apiKeys,
     keyLabels,
   };
