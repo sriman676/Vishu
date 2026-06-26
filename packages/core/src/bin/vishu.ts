@@ -35,6 +35,12 @@ import { registerReasoning } from "../reasoning/rpc.js";
 import { registerReasoningTools } from "../reasoning/tools.js";
 import { Cassette, type ReplayMode } from "../replay/cassette.js";
 import { registerReplay } from "../replay/rpc.js";
+import { registerEval as registerEvalRpc } from "../eval/rpc.js";
+import { EvalHistory } from "../eval/history.js";
+import { renderEval } from "../eval/report.js";
+import { runEval } from "../eval/runner.js";
+import { makeRunners } from "../eval/runners.js";
+import { BUILTIN_SUITE } from "../eval/suite.js";
 import { buildRouter } from "../providers/factory.js";
 import { RunLog } from "../reliability/runlog.js";
 import { makePolicy } from "../security/policy.js";
@@ -141,6 +147,7 @@ async function serve(): Promise<number> {
   registerReasoningTools(tools, { router, model: config.provider.model });
   registerReasoning(registry, { router, model: config.provider.model });
   registerReplay(registry, cassette);
+  registerEvalRpc(registry, { router, model: config.provider.model, historyFile: join(config.paths.workspaceDir, "eval-history.jsonl") });
   const sessions = new SessionStore();
   const twin = new DigitalTwin(join(config.paths.workspaceDir, "twin.json"));
   const profile = new IdentityProfile(join(config.paths.workspaceDir, "profile.json"));
@@ -346,6 +353,21 @@ function report(daysArg?: string): number {
   return 0;
 }
 
+/** Long-horizon eval harness: run the built-in suite against a runner, print a scorecard + trend, and
+ * append the run to history so quality is tracked over time. Runners: baseline | effort | moa. */
+async function evalCmd(runnerName = "effort"): Promise<number> {
+  const config = loadConfig();
+  const router = buildRouter(config.provider, usageLog(config));
+  const runners = makeRunners(router, config.provider.model);
+  const runner = runners[runnerName];
+  if (!runner) return usageErr(`vishu eval [${Object.keys(runners).join("|")}]`);
+  const report = await runEval(BUILTIN_SUITE, runner, { runnerName });
+  const history = new EvalHistory(join(config.paths.workspaceDir, "eval-history.jsonl"));
+  history.record(report);
+  process.stdout.write(`${renderEval(report, history.trend(runnerName))}\n`);
+  return 0;
+}
+
 async function rpc(method: string, paramsJson?: string): Promise<number> {
   const config = loadConfig();
   const token = readToken(config.paths.workspaceDir);
@@ -383,6 +405,7 @@ async function main(argv: string[]): Promise<number> {
     return build(text);
   }
   if (cmd === "report") return report(argv[1]);
+  if (cmd === "eval") return evalCmd(argv[1]);
   if (cmd === "rpc") {
     const method = argv[1];
     if (!method) return usageErr("vishu rpc <method> [jsonParams]");
@@ -401,6 +424,7 @@ async function main(argv: string[]): Promise<number> {
       "  vishu agent <task>           run the tool loop (build/run inside action_dir)",
       "  vishu build <what>           guided secure app builder: spec interview → build → pentest",
       "  vishu report [days]          weekly token report: where tokens go + where they're wasted",
+      "  vishu eval [runner]          run the eval suite (baseline|effort|moa) + track quality over time",
       "  vishu rpc <method> [json]    call a method on a running core",
       "",
     ].join("\n"),

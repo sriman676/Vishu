@@ -529,8 +529,15 @@ commit per item. Highest-leverage order:
    this is the periodic maintenance + conflict-surfacing pass. Surfaced over `vishu.memory_selfheal`. Test:
    eviction removes the file + flags the same-subject conflict (135/135). ponytail ceiling: time-based prune,
    no value scoring; conflict detection is exact-subject (semantic conflict needs a model).
-8. **Long-horizon eval harness** — a task suite + scorer to measure multi-step / multi-agent quality over
-   time (largest, least user-visible — do last, or skip if budget is tight).
+8. **Long-horizon eval harness** — ✅ DONE. `eval/` (TS, dep-free, reuses `parallelMap`): `suite.ts`
+   deterministically-graded task suite (no LLM judge), `runner.ts` `runEval` aggregates pass-rate + mean
+   score (a throwing runner scores 0, never crashes), `runners.ts` `makeRunners` exposes the **three
+   comparable runners — baseline (single call) vs effort (adaptive amplification, items 1-4) vs moa
+   (multi-agent ensemble)** so the harness measures whether spending compute raises quality, `history.ts`
+   JSONL + `trend()` tracks score over time. Surfaced as `vishu eval [runner]` CLI + `vishu.eval_run|trend`
+   RPC. Tests: grading/aggregation, throwing-runner safety, trend delta (138/138). ponytail ceilings:
+   starter suite (load a project suite from disk = named seam); Coordinator/agent-loop runner (build tasks,
+   different shape) = named seam.
 
 **#9 stays advisory by design** — the deterministic scanner + optional Semgrep are the gates; gating on a
 non-deterministic LLM verdict can both block valid builds and pass bad ones.
@@ -568,8 +575,9 @@ analyzer — codegraph/LLM-proposed improvements remain the upgrade); **digital-
 Still open:
 - **Capability amplifiers** — ✅ DONE (items 1–4): self-consistency/best-of-N, Mixture-of-Agents, Reflexion,
   difficulty/effort router. `reasoning/` module + `solve`/`best_of_n` tools + `vishu.reasoning_*` RPC.
-- **Set C frontier mitigations** — record/replay, cross-session identity, self-healing memory, eval harness.
-  *(Planned as items 5–8 in the Next-session section.)*
+- **Set C frontier mitigations** — ✅ DONE (items 5–8): deterministic record/replay (`replay/`),
+  cross-session identity profile (`personalization/profile.ts`), self-healing memory
+  (`memory/rollup.ts selfHealMemory`), long-horizon eval harness (`eval/`).
 - **Packaged desktop installer** (Tauri bundle); CORS is done, bundle/signing toolchain still needed. Absorb
   the `desktop` module's keyboard/mouse/overlay into the harness.
 - **Real channel connectors** behind creds (Slack/Gmail/Telegram/Notion); inbound triage already exists.
