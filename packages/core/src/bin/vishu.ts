@@ -23,6 +23,8 @@ import { MODULES } from "../modules/all.js";
 import { loadModules } from "../modules/registry.js";
 import { MemoryStore } from "../memory/store.js";
 import { registerMemoryTools } from "../memory/tools.js";
+import { ProjectEvolver, runEvolutionPass } from "../personalization/evolve.js";
+import { registerEvolve } from "../personalization/rpc.js";
 import { registerOrchestrationTools } from "../orchestration/tools.js";
 import { buildRoles } from "../orchestration/roles.js";
 import { buildRouter } from "../providers/factory.js";
@@ -147,6 +149,14 @@ async function serve(): Promise<number> {
   });
   registerAutomation(registry, workflows, triggers);
   triggers.start();
+
+  // Phase 13: self-evolving loop — scan the action dir for cheap improvements on a daily cron and
+  // record them as suggest-only proposals (never auto-applied). Reachable over vishu.evolve_*.
+  const evolver = new ProjectEvolver(join(config.paths.workspaceDir, "evolve.json"));
+  registerEvolve(registry, evolver, workflows);
+  const evolveTick = () => runEvolutionPass(evolver, config.paths.actionDir, bus);
+  evolveTick(); // one pass at startup
+  setInterval(evolveTick, 86_400_000).unref(); // daily; unref so it never holds the process open
   startResourceGuard(gate); // throttle background work under CPU load
   attachNotificationSink(bus); // surface trigger notifications (Phase 14 swaps in an OS toast)
   if (config.budgetUsd > 0) {
