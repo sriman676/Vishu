@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { ScriptedProvider } from "../providers/mock.js";
 import { Router } from "../providers/router.js";
 import type { ChatResponse } from "../providers/types.js";
+import { reflexion } from "./reflexion.js";
 import { bestOfN } from "./selfconsistency.js";
 
 const r = (content: string): ChatResponse => ({ content, finish: "stop" });
@@ -35,4 +36,24 @@ test("N=1 is degenerate: the single sample is returned", async () => {
   assert.equal(res.chosen, "solo");
   assert.equal(res.candidates.length, 1);
   assert.equal(res.votes, 1);
+});
+
+test("reflexion: critique drives one revision, then NO_CHANGE stops it", async () => {
+  // generate → critique → revise → critique(approves)
+  const res = await reflexion(routerOf("draft", "flaw: missing X", "better", "NO_CHANGE"), "m", "q", { maxIterations: 3 });
+  assert.equal(res.answer, "better");
+  assert.equal(res.iterations, 1);
+  assert.deepEqual(res.critiques, ["flaw: missing X"]);
+});
+
+test("reflexion: an approved first answer is returned unrevised", async () => {
+  const res = await reflexion(routerOf("draft", "NO_CHANGE"), "m", "q", { maxIterations: 3 });
+  assert.equal(res.answer, "draft");
+  assert.equal(res.iterations, 0);
+});
+
+test("reflexion: the iteration budget stops a never-satisfied critic", async () => {
+  const res = await reflexion(routerOf("d", "bad", "d2"), "m", "q", { maxIterations: 1 });
+  assert.equal(res.answer, "d2");
+  assert.equal(res.iterations, 1);
 });

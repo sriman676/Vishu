@@ -493,8 +493,12 @@ commit per item. Highest-leverage order:
    a single Router. Tests: 2-layer ensemble, default-aggregator, single-Router degrade (122/122 green).
    Library function (same surface as `council`); its consumer is item 4's effort router (hard→MoA) — no
    speculative tool/RPC. ponytail ceiling: fixed L layers, no early-stop on convergence (named upgrade).
-3. **Reflexion self-critique** — generate → model critiques its own answer → revise, bounded (extends
-   `selfVerify` from builds to any answer). Stop when the critique says "no change" or the budget hits.
+3. **Reflexion self-critique** — ✅ DONE. `reasoning/reflexion.ts` `reflexion(router, model, prompt, opts)`:
+   generate → the model critiques its own answer → revise, bounded by `maxIterations` and stopped early when
+   the critic returns the `NO_CHANGE` sentinel. The LLM-critique analog of the deterministic `selfVerify`
+   loop, applied to any answer. Library function (item 4's consumer). Tests: one-revision-then-approve,
+   approved-first-answer, budget-cap-on-never-satisfied-critic (125/125 green). ponytail ceiling: single
+   critic voice, no separate verifier model — a distinct judge/verifier is the named upgrade.
 4. **Difficulty / effort router** — a cheap classifier (heuristic first; small-model upgrade later) picks
    effort per query: trivial→single call, medium→self-consistency, hard→MoA/orchestration. The meta-controller
    that spends compute where it pays and saves tokens elsewhere; reports chosen effort into the token report.
