@@ -8,6 +8,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
+    "vishu": "node packages/core/dist/bin/vishu.js",
     "dev:app": "pnpm --filter @vishu/frontend dev",
     "build:app": "pnpm --filter @vishu/frontend build"
   },

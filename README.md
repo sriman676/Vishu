@@ -18,7 +18,7 @@ It runs on Windows and is cross-platform. CLI-first, with a React/PWA frontend a
 
 ## Status
 
-**Phases 0–14 complete and green** (92 core tests passing; frontend builds clean; Rust harness compiles). The whole requested backlog is built too. The native **harness** (Rust/Tauri) now supervises the core — spawns `vishu serve`, restarts it on crash, and hands the UI a ready bearer token so you never paste one (`pnpm tauri:dev`). The one named upgrade left is the *packaged* binary's cross-origin path (webview→core), which needs core CORS or a harness-side proxy. See [`PLAN.md`](PLAN.md) for the full phase-by-phase record.
+**Phases 0–14 complete and green, plus the full capability build-out** (**142 core tests passing**; frontend builds clean; Rust harness compiles). On top of the core: the four **capability amplifiers** (self-consistency/best-of-N, Mixture-of-Agents, Reflexion, and a difficulty/effort router — `vishu.reasoning_*`), the **Set C frontier mitigations** (deterministic record/replay, cross-session identity profile, self-healing memory, and a long-horizon **eval harness** — `vishu eval`), **RTK-style shell-output compression** (squeezes noisy command output before it reaches the model), and a flag-gated **report-doc** module. The native **harness** (Rust/Tauri) supervises the core — spawns `vishu serve`, restarts it on crash, and hands the UI a ready bearer token so you never paste one (`pnpm tauri:dev`). The one named upgrade left is the *packaged* binary's cross-origin path (webview→core). See [`PLAN.md`](PLAN.md) for the full phase-by-phase record.
 
 ## Quickstart
 
@@ -26,13 +26,21 @@ It runs on Windows and is cross-platform. CLI-first, with a React/PWA frontend a
 pnpm install              # Node 24+, pnpm workspace
 pnpm -r build             # build all packages
 
+# point Vishu at a real provider (otherwise it runs an offline mock that just echoes)
+export VISHU_PROVIDER=openai          # openai (OpenAI-compatible: OpenRouter/NIM/local/…), anthropic, ollama
+export VISHU_API_KEY=sk-...           # or VISHU_API_KEYS=key1,key2 for auto-failover
+export VISHU_MODEL=gpt-4o-mini        # optional; sensible default per provider
+
 # run the core (loopback JSON-RPC, prints its bearer token path)
-vishu serve
+pnpm vishu serve
 
 # one-shot chat / autonomous tool loop / guided secure build
-vishu chat "explain this repo"
-vishu agent "add a /health endpoint and test it"
-vishu build "a todo app with auth"
+pnpm vishu chat "explain this repo"
+pnpm vishu agent "add a /health endpoint and test it"
+pnpm vishu build "a todo app with auth"
+
+# measure quality: baseline vs amplified vs multi-agent ensemble, tracked over time
+pnpm vishu eval effort
 
 # frontend (web): start the core, then
 pnpm dev:app              # Vite dev server on :5800, paste the printed core.token
@@ -40,12 +48,17 @@ pnpm dev:app              # Vite dev server on :5800, paste the printed core.tok
 pnpm tauri:dev
 ```
 
+> On Windows PowerShell, set env vars with `$env:VISHU_PROVIDER="openai"` instead of `export`.
+
 ## Configuration (env)
 
 All config is file + `VISHU_*` env. The common ones:
 
 | Var | Purpose |
 |---|---|
+| `VISHU_PROVIDER` | `openai` (OpenAI-compatible), `anthropic`, `ollama`, or `mock` (default — offline echo) |
+| `VISHU_API_KEY` / `VISHU_API_KEYS` | provider key; comma-separated list rotates on quota/limit/5xx |
+| `VISHU_MODEL` / `VISHU_BASE_URL` | override model + endpoint (sensible defaults per provider) |
 | `VISHU_PORT` / `VISHU_CORE_HOST` | core bind (default `127.0.0.1:5712`) |
 | `VISHU_MODULES` | comma-list of optional modules to enable (off by default) |
 | `VISHU_WEBHOOKS` | `{"channel":"https://hook"}` outbound webhook connectors |
@@ -95,4 +108,4 @@ Original mark designed for this project (global uniqueness is not legally guaran
 
 ## License
 
-TBD.
+[MIT](LICENSE) © 2026 srimanrutvik224
