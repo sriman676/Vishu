@@ -438,4 +438,12 @@ async function main(argv: string[]): Promise<number> {
   return cmd && cmd !== "help" && cmd !== "--help" ? 1 : 0;
 }
 
-process.exit(await main(process.argv.slice(2)));
+// Set exitCode and let the event loop drain (handles are unref'd) instead of an abrupt process.exit()
+// that races with socket/stdout teardown — the latter trips a libuv UV_HANDLE_CLOSING assertion on
+// Windows when a command errors (e.g. a provider 429). A thrown error becomes one clean line, not a crash.
+try {
+  process.exitCode = await main(process.argv.slice(2));
+} catch (e) {
+  process.stderr.write(`[vishu] ${e instanceof Error ? e.message : String(e)}\n`);
+  process.exitCode = 1;
+}
