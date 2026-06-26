@@ -31,6 +31,9 @@ export interface SubagentOptions {
   validate?: (worktreeDir: string) => Promise<ValidationResult>;
   /** On success, commit the worktree and merge its branch back into `repoDir` (harvest the winner). */
   harvest?: boolean;
+  /** Keep the worktree + branch alive after returning (caller must invoke `outcome.cleanup`). Lets the
+   * parallel Coordinator pick a winner first, then merge that one branch serially — no concurrent merges. */
+  keepWorktree?: boolean;
   maxIterations?: number;
   runLog?: RunLog;
 }
@@ -41,8 +44,12 @@ export interface SubagentOutcome {
   final: string;
   validation: ValidationResult;
   worktree: string;
+  /** The branch holding this subagent's work — usable for a deferred merge when `keepWorktree`. */
+  branch: string;
   /** True if the winning branch's changes were merged back into the action repo (harvest). */
   merged: boolean;
+  /** Remove the worktree + branch. A no-op unless `keepWorktree` was set (then the caller must call it). */
+  cleanup: () => void;
 }
 
 export class NoParentContextError extends Error {
@@ -79,6 +86,10 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentOutcom
   const add = git(opts.repoDir, "worktree", "add", "-b", branch, worktree);
   if (add.code !== 0) throw new Error(`[orchestration] worktree add failed: ${add.out}`);
 
+  const cleanup = () => {
+    git(opts.repoDir, "worktree", "remove", "--force", worktree);
+    git(opts.repoDir, "branch", "-D", branch);
+  };
   try {
     const tier = narrowTier(opts.parentPolicy.tier, opts.tier ?? opts.parentPolicy.tier);
     const policy: SecurityPolicy = makePolicy(tier, worktree);
@@ -97,10 +108,11 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentOutcom
     let merged = false;
     if (validation.ok && opts.harvest) merged = harvestBranch(opts.repoDir, worktree, branch, opts.runLog);
     opts.runLog?.log("subagent_done", `${opts.archetype.name} ok=${validation.ok}${merged ? " merged" : ""}`);
-    return { ok: validation.ok, archetype: opts.archetype.name, final: result.final, validation, worktree, merged };
-  } finally {
-    git(opts.repoDir, "worktree", "remove", "--force", worktree);
-    git(opts.repoDir, "branch", "-D", branch);
+    if (!opts.keepWorktree) cleanup();
+    return { ok: validation.ok, archetype: opts.archetype.name, final: result.final, validation, worktree, branch, merged, cleanup: opts.keepWorktree ? cleanup : () => {} };
+  } catch (e) {
+    cleanup(); // an error never leaves a stray worktree behind
+    throw e;
   }
 }
 
@@ -108,7 +120,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentOutcom
  * (e.g. conflict) is logged and the branch is left for inspection — the caller already has the result.
  * ponytail: --no-ff merge, no conflict resolution; if both branches touch the same files, resolve by
  * hand. Single-winner harvest rarely conflicts (only one branch merges). */
-function harvestBranch(repoDir: string, worktree: string, branch: string, runLog?: RunLog): boolean {
+export function harvestBranch(repoDir: string, worktree: string, branch: string, runLog?: RunLog): boolean {
   git(worktree, "add", "-A");
   git(worktree, "commit", "-m", `vishu: harvest ${branch}`, "--allow-empty");
   const merge = git(repoDir, "merge", "--no-ff", "--no-edit", branch);

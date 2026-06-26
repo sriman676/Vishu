@@ -81,6 +81,44 @@ test("orchestrated request fans out, prunes a failed branch, returns one result"
   assert.match(result.final, /Backpropagated learnings/); // pruned-branch lesson carried into the result
 });
 
+test("parallel mode: branches race, the winner is auto-merged and failed-branch lessons carry over", async () => {
+  const repoDir = mkdtempSync(join(tmpdir(), "vishu-par-"));
+  // call 0: hypotheses; calls 1+ each branch's turn — identical content so concurrent order can't matter.
+  const router = new Router([
+    new ScriptedProvider([
+      { content: "approach-a\napproach-b", finish: "stop" },
+      { content: "built", finish: "stop" },
+      { content: "built", finish: "stop" },
+    ]),
+  ]);
+  const coordinator = new Coordinator({
+    router,
+    model: "mock",
+    parentPolicy: makePolicy("full", repoDir),
+    parentRegistry: registerBuiltins(new ToolRegistry()),
+    repoDir,
+  });
+
+  const result = await coordinator.run("build a thing", {
+    parallel: true,
+    concurrency: 2,
+    // branch b passes and drops an artifact in its worktree; branch a fails.
+    validate: async (hypothesis, wt) => {
+      if (!hypothesis.includes("b")) return { ok: false, output: `validated ${hypothesis}` };
+      writeFileSync(join(wt, "artifact.txt"), "winner");
+      return { ok: true, output: `validated ${hypothesis}` };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.chosen, "approach-b"); // the one that passed
+  assert.equal(result.branches.length, 2);
+  assert.equal(result.merged, true); // parallel winner is now auto-merged (serial, post-race)
+  assert.equal(readFileSync(join(repoDir, "artifact.txt"), "utf8"), "winner"); // its work landed in the repo
+  assert.equal(result.learnings.length, 1); // the failed branch's lesson is still collected
+  assert.match(result.final, /Cross-branch learnings/); // …and backpropagated into the result
+});
+
 test("harvest: the winning branch's work is merged back into the action repo", async () => {
   const repoDir = mkdtempSync(join(tmpdir(), "vishu-harvest-"));
   const outcome = await runSubagent({

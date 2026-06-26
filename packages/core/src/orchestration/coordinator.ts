@@ -4,7 +4,7 @@ import type { SecurityPolicy } from "../security/policy.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { parallelMap } from "../util/parallel.js";
 import { ARCHETYPES } from "./archetypes.js";
-import { commandValidator, runSubagent, type ValidationResult } from "./subagent.js";
+import { commandValidator, harvestBranch, runSubagent, type ValidationResult } from "./subagent.js";
 
 type SubagentOutcome = Awaited<ReturnType<typeof runSubagent>>;
 
@@ -25,8 +25,8 @@ export interface CoordinatorOptions {
   validate?: (hypothesis: string, worktreeDir: string) => Promise<ValidationResult>;
   /** Merge the winning branch back into the action repo (default true). */
   harvest?: boolean;
-  /** Race all hypotheses concurrently instead of one-at-a-time. Faster, but no learning backpropagation
-   * between branches, and the winner is NOT auto-merged (concurrent git merges into one repo race). */
+  /** Race all hypotheses concurrently instead of one-at-a-time. Faster; the winner is merged back in a
+   * single serial step after the race, and failed-branch lessons are backpropagated into the result. */
   parallel?: boolean;
   /** Max branches in flight at once when `parallel` (default: all of them). */
   concurrency?: number;
@@ -82,7 +82,7 @@ export class Coordinator {
   }
 
   /** Run one hypothesis as an isolated subagent. `learnings` (sequential only) are fed in as context. */
-  private async runBranch(goal: string, hypothesis: string, learnings: string[], opts: CoordinatorOptions, harvest: boolean): Promise<{ branch: BranchResult; outcome: SubagentOutcome }> {
+  private async runBranch(goal: string, hypothesis: string, learnings: string[], opts: CoordinatorOptions, harvest: boolean, keepWorktree = false): Promise<{ branch: BranchResult; outcome: SubagentOutcome }> {
     this.deps.runLog?.log("branch_start", hypothesis);
     const context = [`Goal: ${goal}`, ...(learnings.length ? ["Learnings from failed approaches:", ...learnings] : [])].join("\n");
     const outcome = await runSubagent({
@@ -96,6 +96,7 @@ export class Coordinator {
       repoDir: this.deps.repoDir,
       runLog: this.deps.runLog,
       harvest,
+      keepWorktree,
       validate: opts.validate
         ? (wt) => opts.validate!(hypothesis, wt)
         : opts.validateCommand
@@ -124,18 +125,24 @@ export class Coordinator {
     return { ok: false, final: `All ${branches.length} approach(es) failed.\n${learnings.join("\n")}`, branches, learnings, merged: false };
   }
 
-  /** Opt-in: race all hypotheses concurrently (bounded). No learning backprop; the winner (first PASS by
-   * order) is reported but NOT merged — concurrent git merges into one repo race. ponytail: auto-merging
-   * the parallel winner afterward is the named upgrade; use sequential mode when you need the auto-merge. */
+  /** Opt-in: race all hypotheses concurrently (bounded), each in a kept worktree (no merge during the
+   * race). Afterward the winner (first PASS by order) is merged back in a single serial step — safe,
+   * since only one merge runs — and the failed branches' lessons are backpropagated into the final
+   * result. All kept worktrees are then cleaned up.
+   * ponytail ceiling that remains: concurrent `git worktree add` can still race at high concurrency. */
   private async runParallel(goal: string, hypotheses: string[], opts: CoordinatorOptions): Promise<OrchestrationResult> {
-    const results = await parallelMap(hypotheses, (h) => this.runBranch(goal, h, [], opts, false), opts.concurrency ?? hypotheses.length);
+    const results = await parallelMap(hypotheses, (h) => this.runBranch(goal, h, [], opts, false, true), opts.concurrency ?? hypotheses.length);
     const branches = results.map((r) => r.branch);
     const learnings = results.filter((r) => !r.branch.ok).map((r) => `Tried "${r.branch.hypothesis}": failed validation — ${r.branch.output.slice(0, 200)}`);
     const winner = results.find((r) => r.branch.ok);
-    if (winner) {
-      this.deps.runLog?.log("branch_harvest", `${winner.branch.hypothesis} (parallel; not merged)`);
-      return { ok: true, final: winner.branch.final, chosen: winner.branch.hypothesis, branches, learnings, merged: false };
+    try {
+      if (!winner) return { ok: false, final: `All ${branches.length} approach(es) failed.\n${learnings.join("\n")}`, branches, learnings, merged: false };
+      const merged = (opts.harvest ?? true) ? harvestBranch(this.deps.repoDir, winner.outcome.worktree, winner.outcome.branch, this.deps.runLog) : false;
+      this.deps.runLog?.log("branch_harvest", `${winner.branch.hypothesis} (parallel${(opts.harvest ?? true) ? (merged ? "; merged" : "; merge failed") : ""})`);
+      const final = learnings.length ? `${winner.branch.final}\n\n(Cross-branch learnings:\n${learnings.join("\n")})` : winner.branch.final;
+      return { ok: true, final, chosen: winner.branch.hypothesis, branches, learnings, merged };
+    } finally {
+      for (const r of results) r.outcome.cleanup(); // winner already merged; discard every kept worktree
     }
-    return { ok: false, final: `All ${branches.length} approach(es) failed.\n${learnings.join("\n")}`, branches, learnings, merged: false };
   }
 }
