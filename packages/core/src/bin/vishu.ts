@@ -27,7 +27,8 @@ import { MemoryStore } from "../memory/store.js";
 import { registerMemoryTools } from "../memory/tools.js";
 import { ProjectEvolver, runEvolutionPass } from "../personalization/evolve.js";
 import { DigitalTwin } from "../personalization/twin.js";
-import { registerEvolve, registerTwin } from "../personalization/rpc.js";
+import { IdentityProfile } from "../personalization/profile.js";
+import { registerEvolve, registerProfile, registerTwin } from "../personalization/rpc.js";
 import { registerOrchestrationTools } from "../orchestration/tools.js";
 import { buildRoles } from "../orchestration/roles.js";
 import { registerReasoning } from "../reasoning/rpc.js";
@@ -142,6 +143,7 @@ async function serve(): Promise<number> {
   registerReplay(registry, cassette);
   const sessions = new SessionStore();
   const twin = new DigitalTwin(join(config.paths.workspaceDir, "twin.json"));
+  const profile = new IdentityProfile(join(config.paths.workspaceDir, "profile.json"));
   const agentService = new AgentService({
     router,
     tools,
@@ -150,6 +152,7 @@ async function serve(): Promise<number> {
     model: config.provider.model,
     runLog: new RunLog(),
     twin,
+    profile,
   }, sessions);
   registerAgent(registry, agentService);
 
@@ -160,7 +163,7 @@ async function serve(): Promise<number> {
     const terminal = new Terminal(config.paths.actionDir);
     try {
       const svc = new AgentService(
-        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin },
+        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile },
         sessions,
       );
       return await svc.startTurn(sid, msg);
@@ -195,6 +198,7 @@ async function serve(): Promise<number> {
   const evolver = new ProjectEvolver(join(config.paths.workspaceDir, "evolve.json"));
   registerEvolve(registry, evolver, workflows);
   registerTwin(registry, twin, workflows);
+  registerProfile(registry, profile, twin);
   const evolveTick = () => runEvolutionPass(evolver, config.paths.actionDir, bus);
   evolveTick(); // one pass at startup
   setInterval(evolveTick, 86_400_000).unref(); // daily; unref so it never holds the process open

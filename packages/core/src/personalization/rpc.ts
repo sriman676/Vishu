@@ -1,6 +1,7 @@
 import type { WorkflowStore } from "../automation/workflows.js";
 import { err, ok, type Registry } from "../transport/rpc.js";
 import type { ProjectEvolver } from "./evolve.js";
+import type { IdentityProfile } from "./profile.js";
 import type { DigitalTwin } from "./twin.js";
 
 /** Expose the self-evolving loop over `vishu.evolve_*` — proposals are suggest-only; accept saves a
@@ -32,5 +33,22 @@ export function registerTwin(registry: Registry, twin: DigitalTwin, workflows: W
     const p = (params ?? {}) as { text?: string };
     if (!p.text) return err("invalid_params", "text is required");
     return ok(twin.accept(p.text, workflows));
+  });
+}
+
+/** Expose the cross-session identity profile over `vishu.profile_*` — read it, add a note, or fold in
+ * the twin's recurring tasks. The rendered profile loads into the agent's system prompt each session. */
+export function registerProfile(registry: Registry, profile: IdentityProfile, twin: DigitalTwin): void {
+  registry.register("vishu.profile_get", () => ok({ notes: profile.notes(), rendered: profile.render() }));
+
+  registry.register("vishu.profile_note", (params) => {
+    const p = (params ?? {}) as { text?: string };
+    if (!p.text) return err("invalid_params", "text is required");
+    return ok({ added: profile.note(p.text) });
+  });
+
+  registry.register("vishu.profile_absorb", (params) => {
+    const p = (params ?? {}) as { threshold?: number };
+    return ok({ added: profile.absorbTwin(twin, p.threshold) });
   });
 }

@@ -516,8 +516,12 @@ commit per item. Highest-leverage order:
    `VISHU_REPLAY=record|replay` (wired in `serve`) or the `vishu.replay_status` RPC. Tests: record→replay
    round-trip without re-calling the provider, replay-miss fall-through, off-mode never records (131/131).
    ponytail ceiling: per-call file write (fine for a debug/test feature) — batch if a hot loop needs it.
-6. **Cross-session identity profile** — a persistent per-user profile (prefs, recurring context) loaded into
-   the system prompt each session, updated from the twin + memory rollups. The "it actually knows me" feel.
+6. **Cross-session identity profile** — ✅ DONE. `personalization/profile.ts` `IdentityProfile`: an atomic
+   JSON store of deduped per-user notes; `render()` produces a system-prompt block that `AgentService`
+   prepends to every new session (empty profile = no noise). `absorbTwin()` folds the digital twin's
+   recurring tasks in as context; memory-rollup notes use the same `note()` seam. Surfaced over
+   `vishu.profile_get|note|absorb`. Tests: dedupe/persist/render, twin absorption, and the profile reaching
+   a live session's system prompt (134/134). ponytail ceiling: flat note list (no structured prefs/embeddings).
 7. **Self-healing memory** — consolidation + eviction (bound unbounded growth) and contradiction/staleness
    on recall (recency/decay weighting; flag conflicting notes on one subject). Extends `memory/rollup.ts`.
 8. **Long-horizon eval harness** — a task suite + scorer to measure multi-step / multi-agent quality over
