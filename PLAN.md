@@ -572,6 +572,13 @@ parallel winner** + cross-branch learning; **multi-provider config**; **self-evo
 analyzer — codegraph/LLM-proposed improvements remain the upgrade); **digital-twin auto-record**;
 **agent-level task queue**. (Details in the Phase-15 "Shipped" section above.)
 
+Shipped this session (✅): **Report-doc generation** (the DeerFlow output-gen gap, scoped to docs) —
+`modules/report.ts` flag-gated Phase-12 module; `report_save` tool assembles a structured markdown research
+report (title, date, table of contents, sections, sources) under `<workspace>/reports`, slug-jailed,
+dep-free, off by default. The agent researches (web/memory tools) + synthesizes; the module formats.
+ponytail ceiling: markdown is the source of truth — PDF/slides/podcast rendering is the named upgrade
+(pipe through the make-pdf skill or a pandoc/puppeteer step).
+
 Shipped this session (✅): **RTK-style shell-output compression** — `tokenjuice/shellfilter.ts`
 `compressShellOutput` squeezes noisy `run_shell` output before it enters the model context (per-command
 noise filters for npm/pnpm/yarn/pip installs, `git status`, test runners + count-dedupe `(×N)` + head/tail
