@@ -378,6 +378,12 @@ async function rpc(method: string, paramsJson?: string): Promise<number> {
 }
 
 async function main(argv: string[]): Promise<number> {
+  // Load a .env from the working dir if present (Node 24 native, no dep). Absent → use the real env.
+  try {
+    process.loadEnvFile();
+  } catch {
+    /* no .env file — fall back to the ambient environment */
+  }
   const cmd = argv[0];
 
   if (cmd === "--version" || cmd === "-v") {

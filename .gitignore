@@ -21,6 +21,7 @@ venv/
 # Secrets / local runtime state
 .env
 .env.*
+!.env.example
 core.token
 .vishu/
 
