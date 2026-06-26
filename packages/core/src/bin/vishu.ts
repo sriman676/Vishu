@@ -24,6 +24,7 @@ import { loadModules } from "../modules/registry.js";
 import { MemoryStore } from "../memory/store.js";
 import { registerMemoryTools } from "../memory/tools.js";
 import { registerOrchestrationTools } from "../orchestration/tools.js";
+import { buildRoles } from "../orchestration/roles.js";
 import { buildRouter } from "../providers/factory.js";
 import { RunLog } from "../reliability/runlog.js";
 import { makePolicy } from "../security/policy.js";
@@ -108,7 +109,10 @@ async function serve(): Promise<number> {
   const skills = new SkillIndex();
   skills.loadDir(config.paths.skillsDir);
   registerSkillTools(tools, skills);
-  const router = buildRouter(config.provider, usageLog(config));
+  const usage = usageLog(config);
+  const router = buildRouter(config.provider, usage);
+  const roles = buildRoles(router, config.providers, config.roles, usage);
+  if (roles.roles().length) process.stdout.write(`[roles] ${roles.roles().map((r) => `${r}→${config.roles[r]}`).join(", ")}\n`);
   const memory = new MemoryStore(
     config.paths.vaultDir,
     config.paths.memoryDbFile,
@@ -118,7 +122,7 @@ async function serve(): Promise<number> {
   registerMemoryTools(tools, memory);
   registerMemory(registry, memory);
   registerUsage(registry, config.paths.workspaceDir);
-  registerOrchestrationTools(tools, { router, model: config.provider.model });
+  registerOrchestrationTools(tools, { roles, model: config.provider.model });
   const agentService = new AgentService({
     router,
     tools,

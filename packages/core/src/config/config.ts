@@ -9,13 +9,28 @@ export interface ProviderConfig {
   baseUrl: string;
   /** One entry per key — the router rotates through them on transient/quota errors. */
   apiKeys: string[];
+  /** Parallel to apiKeys: a human label per key (failover order = array order). */
+  keyLabels: string[];
+}
+
+/** A file-config key may be a bare string or `{ key, label }` to name it explicitly. */
+type KeyEntry = string | { key: string; label?: string };
+
+/** Default label by failover position: primary, backup1, backup2, … */
+function defaultLabel(i: number): string {
+  return i === 0 ? "primary" : `backup${i}`;
 }
 
 export interface VishuConfig {
   paths: VishuPaths;
   /** TCP port for the transport server (Phase 1). */
   port: number;
+  /** The default AI — also the RoleRegistry fallback for any unassigned role. */
   provider: ProviderConfig;
+  /** Named AIs (multi-provider): `{ "<name>": ProviderConfig }`. Empty when only one AI is configured. */
+  providers: Record<string, ProviderConfig>;
+  /** role → named-provider assignment, e.g. `{ "builder": "fast", "judge": "smart" }`. */
+  roles: Record<string, string>;
 }
 
 const DEFAULT_MODEL: Record<ProviderType, string> = {
@@ -32,19 +47,46 @@ const DEFAULT_BASE_URL: Record<ProviderType, string> = {
   ollama: "http://127.0.0.1:11434",
 };
 
-function resolveProvider(env: NodeJS.ProcessEnv, file: { provider?: Partial<ProviderConfig> }): ProviderConfig {
+function resolveProvider(
+  env: NodeJS.ProcessEnv,
+  file: { provider?: Partial<ProviderConfig> & { apiKeys?: KeyEntry[] } },
+): ProviderConfig {
   const type = (env.VISHU_PROVIDER || file.provider?.type || "mock") as ProviderType;
-  const keys = env.VISHU_API_KEYS
+  // Env keys (CSV or single) win over file keys; env can't carry labels, so they get defaults.
+  const entries: KeyEntry[] = env.VISHU_API_KEYS
     ? env.VISHU_API_KEYS.split(",").map((k) => k.trim()).filter(Boolean)
     : env.VISHU_API_KEY
       ? [env.VISHU_API_KEY]
       : file.provider?.apiKeys ?? [];
+  const apiKeys: string[] = [];
+  const keyLabels: string[] = [];
+  entries.forEach((e, i) => {
+    const key = typeof e === "string" ? e : e.key;
+    apiKeys.push(key);
+    keyLabels.push((typeof e === "string" ? undefined : e.label) || defaultLabel(i));
+  });
   return {
     type,
     model: env.VISHU_MODEL || file.provider?.model || DEFAULT_MODEL[type],
     baseUrl: env.VISHU_BASE_URL || file.provider?.baseUrl || DEFAULT_BASE_URL[type],
-    apiKeys: keys,
+    apiKeys,
+    keyLabels,
   };
+}
+
+type ProviderObject = Partial<ProviderConfig> & { apiKeys?: KeyEntry[] };
+
+/** A named provider comes from the file only (env can't carry a name), so no env precedence here. */
+function providerFromObject(o: ProviderObject): ProviderConfig {
+  const type = (o.type || "mock") as ProviderType;
+  const entries: KeyEntry[] = o.apiKeys ?? [];
+  const apiKeys: string[] = [];
+  const keyLabels: string[] = [];
+  entries.forEach((e, i) => {
+    apiKeys.push(typeof e === "string" ? e : e.key);
+    keyLabels.push((typeof e === "string" ? undefined : e.label) || defaultLabel(i));
+  });
+  return { type, model: o.model || DEFAULT_MODEL[type], baseUrl: o.baseUrl || DEFAULT_BASE_URL[type], apiKeys, keyLabels };
 }
 
 /**
@@ -54,7 +96,12 @@ function resolveProvider(env: NodeJS.ProcessEnv, file: { provider?: Partial<Prov
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): VishuConfig {
   const paths = resolvePaths(env);
 
-  let file: { port?: number; provider?: Partial<ProviderConfig> } = {};
+  let file: {
+    port?: number;
+    provider?: ProviderObject;
+    providers?: Record<string, ProviderObject>;
+    roles?: Record<string, string>;
+  } = {};
   try {
     file = JSON.parse(readFileSync(paths.configFile, "utf8")) as typeof file;
   } catch {
@@ -66,5 +113,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): VishuConfig {
     throw new Error(`[config] invalid port: ${port}`);
   }
 
-  return { paths, port, provider: resolveProvider(env, file) };
+  const providers: Record<string, ProviderConfig> = {};
+  for (const [name, o] of Object.entries(file.providers ?? {})) providers[name] = providerFromObject(o);
+
+  return { paths, port, provider: resolveProvider(env, file), providers, roles: file.roles ?? {} };
 }
