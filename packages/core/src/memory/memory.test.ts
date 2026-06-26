@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { EchoProvider } from "../providers/mock.js";
-import { rollupSession } from "./rollup.js";
+import { rollupSession, selfHealMemory } from "./rollup.js";
 import { MemoryStore } from "./store.js";
+
+const note = (meta: string, body: string) => `---\n${meta}\n---\n${body}\n`;
 
 function paths() {
   const dir = mkdtempSync(join(tmpdir(), "vishu-mem-"));
@@ -58,6 +60,26 @@ test("contradiction on write supersedes the prior fact (newest wins)", async () 
   const r = await store.recall("capital");
   assert.match(r.text, /Bravo/);
   assert.doesNotMatch(r.text, /Alpha/);
+  store.close();
+});
+
+test("self-heal: evicts stale superseded notes and flags same-subject conflicts", async () => {
+  const { vault, db } = paths();
+  let store = new MemoryStore(vault, db);
+  await store.put({ content: "seed", subject: "seed" }); // creates the vault dir
+  store.close();
+
+  // An old superseded note (replaced long ago) + two live notes sharing a subject (e.g. edited in Obsidian).
+  writeFileSync(join(vault, "old.md"), note("type: fact\nsubject: capital\ncreated: 2020-01-01T00:00:00Z\nupdated: 2020-01-01T00:00:00Z\nsuperseded_by: new", "old capital"));
+  writeFileSync(join(vault, "dup-a.md"), note("type: fact\nsubject: color\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z", "the color is red"));
+  writeFileSync(join(vault, "dup-b.md"), note("type: fact\nsubject: color\ncreated: 2026-02-01T00:00:00Z\nupdated: 2026-02-01T00:00:00Z", "the color is blue"));
+
+  store = new MemoryStore(vault, db);
+  store.reindex();
+  const healed = selfHealMemory(store, { olderThanDays: 30 });
+  assert.deepEqual(healed.pruned, ["old"]); // stale superseded note evicted
+  assert.ok(!existsSync(join(vault, "old.md")), "the evicted note's file is gone");
+  assert.deepEqual(healed.conflicts, [{ subject: "color", notes: ["dup-a", "dup-b"] }]);
   store.close();
 });
 

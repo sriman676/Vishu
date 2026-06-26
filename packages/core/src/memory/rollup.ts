@@ -28,3 +28,17 @@ export async function rollupSession(store: MemoryStore, opts: RollupOptions = {}
   const subject = opts.subject ?? `session-rollup-${new Date().toISOString().slice(0, 10)}`;
   return store.put({ type: "rollup", subject, content: `Session rollup (${notes.length} notes):\n${body}` });
 }
+
+export interface SelfHealResult {
+  /** Superseded notes evicted to bound growth. */
+  pruned: string[];
+  /** Subjects that still have more than one live note (recency-weighted recall handles ranking). */
+  conflicts: { subject: string; notes: string[] }[];
+}
+
+/** Self-healing memory (Set C #7): consolidate by evicting stale superseded notes (bounds unbounded
+ * growth) and report unresolved same-subject contradictions. Recall already applies recency/decay
+ * weighting; this is the periodic maintenance + conflict-surfacing pass. Extends the rollup. */
+export function selfHealMemory(store: MemoryStore, opts: { olderThanDays?: number } = {}): SelfHealResult {
+  return { pruned: store.pruneSuperseded(opts.olderThanDays), conflicts: store.conflicts() };
+}

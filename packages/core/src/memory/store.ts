@@ -194,6 +194,38 @@ export class MemoryStore {
     return this.vault.list().filter((n) => !n.supersededBy);
   }
 
+  /** Eviction (self-healing memory): drop superseded notes older than the cutoff to bound vault/index
+   * growth — the live note that replaced them stays; history beyond the window is forgotten. Rebuilds the
+   * index once after pruning. Returns the names removed. ponytail: time-based prune, no value scoring. */
+  pruneSuperseded(olderThanDays = 30): string[] {
+    const cutoff = Date.now() - olderThanDays * 86_400_000;
+    const removed: string[] = [];
+    for (const n of this.vault.list()) {
+      if (n.supersededBy && Date.parse(n.updated) < cutoff) {
+        this.vault.remove(n.name);
+        removed.push(n.name);
+      }
+    }
+    if (removed.length) {
+      this.reindex();
+      this.log.log("memory_prune", `${removed.length} superseded notes evicted`);
+    }
+    return removed;
+  }
+
+  /** Subjects with more than one *live* note — a contradiction the supersede-on-write path missed
+   * (e.g. notes edited directly in Obsidian). Recall already prefers newest; this surfaces the conflict. */
+  conflicts(): { subject: string; notes: string[] }[] {
+    const bySubject = new Map<string, string[]>();
+    for (const n of this.notes()) {
+      if (!n.subject) continue;
+      const names = bySubject.get(n.subject);
+      if (names) names.push(n.name);
+      else bySubject.set(n.subject, [n.name]);
+    }
+    return [...bySubject.entries()].filter(([, names]) => names.length > 1).map(([subject, notes]) => ({ subject, notes }));
+  }
+
   /** Re-derive the whole index from the markdown vault (resets the breaker). */
   reindex(): number {
     this.breakerOpen = false;

@@ -522,8 +522,13 @@ commit per item. Highest-leverage order:
    recurring tasks in as context; memory-rollup notes use the same `note()` seam. Surfaced over
    `vishu.profile_get|note|absorb`. Tests: dedupe/persist/render, twin absorption, and the profile reaching
    a live session's system prompt (134/134). ponytail ceiling: flat note list (no structured prefs/embeddings).
-7. **Self-healing memory** — consolidation + eviction (bound unbounded growth) and contradiction/staleness
-   on recall (recency/decay weighting; flag conflicting notes on one subject). Extends `memory/rollup.ts`.
+7. **Self-healing memory** — ✅ DONE. `memory/rollup.ts` `selfHealMemory(store)` + two `MemoryStore`
+   methods: `pruneSuperseded(olderThanDays)` evicts stale superseded notes (bounds unbounded growth, rebuilds
+   the index once) and `conflicts()` flags subjects with more than one live note (e.g. edited directly in
+   Obsidian, where supersede-on-write didn't fire). Recall already applies recency/decay weighting (Phase 7);
+   this is the periodic maintenance + conflict-surfacing pass. Surfaced over `vishu.memory_selfheal`. Test:
+   eviction removes the file + flags the same-subject conflict (135/135). ponytail ceiling: time-based prune,
+   no value scoring; conflict detection is exact-subject (semantic conflict needs a model).
 8. **Long-horizon eval harness** — a task suite + scorer to measure multi-step / multi-agent quality over
    time (largest, least user-visible — do last, or skip if budget is tight).
 
