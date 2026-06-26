@@ -487,8 +487,12 @@ commit per item. Highest-leverage order:
    ponytail ceilings: vote normalization is string-equality (trim/lower/collapse ws) not semantic — a verifier
    that scores free-form answers is the named upgrade; samples run concurrently on one Router (multi-model
    spread rides item 2's MoA).
-2. **Mixture-of-Agents** — layered ensemble: N proposers answer → an aggregator synthesizes → repeat L
-   layers. Uses multi-provider for a true multi-model ensemble; degrades to one Router. Extends `council.ts`.
+2. **Mixture-of-Agents** — ✅ DONE. `council.ts` `mixtureOfAgents(members, prompt, opts)` (Wang et al.):
+   N proposers answer, each later layer sees the prior layer's proposals as references, then an aggregator
+   synthesizes one answer. True multi-model ensemble when members use different routers; degrades cleanly to
+   a single Router. Tests: 2-layer ensemble, default-aggregator, single-Router degrade (122/122 green).
+   Library function (same surface as `council`); its consumer is item 4's effort router (hard→MoA) — no
+   speculative tool/RPC. ponytail ceiling: fixed L layers, no early-stop on convergence (named upgrade).
 3. **Reflexion self-critique** — generate → model critiques its own answer → revise, bounded (extends
    `selfVerify` from builds to any answer). Stop when the critique says "no change" or the budget hits.
 4. **Difficulty / effort router** — a cheap classifier (heuristic first; small-model upgrade later) picks

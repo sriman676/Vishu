@@ -9,7 +9,7 @@ import { makePolicy } from "../security/policy.js";
 import { registerBuiltins } from "../tools/builtins.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { ARCHETYPES, narrowRegistry, narrowTier } from "./archetypes.js";
-import { council } from "./council.js";
+import { council, mixtureOfAgents } from "./council.js";
 import { Coordinator } from "./coordinator.js";
 import { NoParentContextError, runSubagent } from "./subagent.js";
 
@@ -21,6 +21,36 @@ test("council: members answer, judge picks the winner", async () => {
   assert.equal(res.answers.length, 2);
   assert.equal(res.chosenIndex, 1);
   assert.equal(res.chosen, "answer B");
+});
+
+const member = (model: string, ...replies: string[]) => ({
+  router: new Router([new ScriptedProvider(replies.map((content) => ({ content, finish: "stop" as const })))]),
+  model,
+});
+
+test("MoA: layers of proposers feed an explicit aggregator's synthesis", async () => {
+  const a = member("A", "a1", "a2"); // one reply per layer
+  const b = member("B", "b1", "b2");
+  const agg = member("Agg", "final");
+  const res = await mixtureOfAgents([a, b], "q", { aggregator: agg, layers: 2 });
+  assert.equal(res.final, "final");
+  assert.deepEqual(res.layerOutputs, [["a1", "b1"], ["a2", "b2"]]);
+});
+
+test("MoA: defaults the aggregator to the first member", async () => {
+  const a = member("A", "a1", "a2", "synth"); // layer0, layer1, then the aggregation call
+  const b = member("B", "b1", "b2");
+  const res = await mixtureOfAgents([a, b], "q", { layers: 2 });
+  assert.equal(res.final, "synth");
+  assert.deepEqual(res.layerOutputs, [["a1", "b1"], ["a2", "b2"]]);
+});
+
+test("MoA: degrades to a single Router (one proposer per layer)", async () => {
+  const solo = member("S", "p1", "p2");
+  const agg = member("Agg", "F");
+  const res = await mixtureOfAgents([solo], "q", { aggregator: agg, layers: 2 });
+  assert.equal(res.final, "F");
+  assert.deepEqual(res.layerOutputs, [["p1"], ["p2"]]);
 });
 
 test("inherit-and-narrow: tier only drops, tools are parent ∩ archetype", () => {
