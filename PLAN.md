@@ -572,6 +572,14 @@ parallel winner** + cross-branch learning; **multi-provider config**; **self-evo
 analyzer — codegraph/LLM-proposed improvements remain the upgrade); **digital-twin auto-record**;
 **agent-level task queue**. (Details in the Phase-15 "Shipped" section above.)
 
+Shipped this session (✅): **RTK-style shell-output compression** — `tokenjuice/shellfilter.ts`
+`compressShellOutput` squeezes noisy `run_shell` output before it enters the model context (per-command
+noise filters for npm/pnpm/yarn/pip installs, `git status`, test runners + count-dedupe `(×N)` + head/tail
+elision), always preserving error lines and skipping the filters on a non-zero exit so failure context
+survives. In-process TS (not a Rust sidecar — the boundary is already owned in-process; a single-user
+agent has no throughput case for native+IPC). ponytail ceiling: a high-value handful of command rules +
+a strong generic fallback; RTK's 100+ command catalog is the named upgrade (add rules in `commandFilter`).
+
 Still open:
 - **Capability amplifiers** — ✅ DONE (items 1–4): self-consistency/best-of-N, Mixture-of-Agents, Reflexion,
   difficulty/effort router. `reasoning/` module + `solve`/`best_of_n` tools + `vishu.reasoning_*` RPC.

@@ -3,7 +3,32 @@ import { test } from "node:test";
 import type { ChatMessage } from "../providers/types.js";
 import { compactTranscript } from "./compact.js";
 import { htmlToMarkdown } from "./html.js";
+import { compressShellOutput } from "./shellfilter.js";
 import { dedupeLines, summarizeToolResult } from "./summarize.js";
+
+test("compressShellOutput drops install noise, keeps errors, leaves short output alone", () => {
+  const noisy = [
+    "$ npm install",
+    ...Array(30).fill("npm warn deprecated foo@1.0.0: do not use"),
+    "added 250 packages",
+    "audited 400 packages",
+    "npm error could not resolve dependency bar@2",
+  ].join("\n");
+  const { text } = compressShellOutput("npm install", noisy, 0);
+  assert.match(text, /could not resolve dependency bar@2/); // real error survives
+  assert.doesNotMatch(text, /added 250 packages/); // install noise dropped
+  assert.ok(text.length < noisy.length / 2, "noisy output is markedly smaller");
+
+  const short = "exit=0\nall good";
+  assert.equal(compressShellOutput("ls", short, 0).text, short); // short output untouched
+});
+
+test("compressShellOutput preserves failure context (non-zero exit skips command filters)", () => {
+  const out = ["building…", ...Array(20).fill("added 1 package"), "FAILED: linker error"].join("\n");
+  const { text } = compressShellOutput("npm install", out, 1);
+  assert.match(text, /FAILED: linker error/);
+  assert.match(text, /added 1 package/); // not stripped on failure — context kept
+});
 
 test("htmlToMarkdown shrinks HTML markedly and keeps text", () => {
   const html =

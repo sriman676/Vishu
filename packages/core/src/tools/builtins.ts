@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { assertWritable, decideCommand, jailPath, SecurityError } from "../security/policy.js";
 import { guardInjection } from "../security/injection.js";
 import { htmlToMarkdown } from "../tokenjuice/html.js";
+import { compressShellOutput } from "../tokenjuice/shellfilter.js";
 import { ToolRegistry } from "./registry.js";
 import type { Tool } from "./types.js";
 
@@ -59,7 +60,9 @@ const runShell: Tool = {
     const decision = decideCommand(ctx.policy, command);
     if (!decision.allowed) throw new SecurityError(`command refused (${decision.reason}): ${command}`);
     const { stdout, exitCode } = await ctx.terminal.exec(command);
-    return clip(`exit=${exitCode}\n${stdout}`);
+    // Squeeze noisy command output before it enters the model context (RTK-style, in-process).
+    const { text } = compressShellOutput(command, stdout, exitCode ?? 0);
+    return clip(`exit=${exitCode}\n${text}`);
   },
 };
 
