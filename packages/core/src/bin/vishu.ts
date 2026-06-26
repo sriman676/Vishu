@@ -1,7 +1,9 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { registerAgent } from "../agent/rpc.js";
+import { registerAgent, registerAgentQueue } from "../agent/rpc.js";
+import { AgentQueue } from "../agent/queue.js";
+import { SessionStore } from "../agent/session.js";
 import { buildApp } from "../appbuilder/build.js";
 import { formatFindings } from "../appbuilder/security.js";
 import { type AppSpec, type InterviewTurn, interviewStep, persistSpec, specToMarkdown } from "../appbuilder/spec.js";
@@ -126,6 +128,7 @@ async function serve(): Promise<number> {
   registerMemory(registry, memory);
   registerUsage(registry, config.paths.workspaceDir);
   registerOrchestrationTools(tools, { roles, model: config.provider.model });
+  const sessions = new SessionStore();
   const agentService = new AgentService({
     router,
     tools,
@@ -133,8 +136,25 @@ async function serve(): Promise<number> {
     terminal: new Terminal(config.paths.actionDir),
     model: config.provider.model,
     runLog: new RunLog(),
-  });
+  }, sessions);
   registerAgent(registry, agentService);
+
+  // Agent-level task queue: fire-and-poll multitasking, N turns at once (VISHU_AGENT_CONCURRENCY, default 2).
+  // Each task gets its own Terminal so concurrent shells don't interleave; the session store is shared.
+  const agentConcurrency = Number(process.env.VISHU_AGENT_CONCURRENCY) || 2;
+  const agentQueue = new AgentQueue(async (sid, msg) => {
+    const terminal = new Terminal(config.paths.actionDir);
+    try {
+      const svc = new AgentService(
+        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog() },
+        sessions,
+      );
+      return await svc.startTurn(sid, msg);
+    } finally {
+      terminal.close();
+    }
+  }, agentConcurrency);
+  registerAgentQueue(registry, agentQueue);
 
   // Phase 9: proactive automation — saved workflows + triggers on a 5s cron tick / events / files.
   const workflows = new WorkflowStore(join(config.paths.workspaceDir, "workflows"));
