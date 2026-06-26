@@ -59,6 +59,8 @@ export interface MoaOptions {
   /** Proposer rounds; each layer sees the previous layer's proposals (default 2). */
   layers?: number;
   system?: string;
+  /** Usage category for the token report (default "orchestration"). */
+  category?: string;
 }
 
 export interface MoaResult {
@@ -67,12 +69,12 @@ export interface MoaResult {
   layerOutputs: string[][];
 }
 
-const ask = (m: CouncilMember, prompt: string, system?: string): Promise<string> =>
+const ask = (m: CouncilMember, prompt: string, system?: string, category = "orchestration"): Promise<string> =>
   m.router
     .chat({
       model: m.model,
       messages: [...(system ? [{ role: "system" as const, content: system }] : []), { role: "user" as const, content: prompt }],
-      category: "orchestration",
+      category,
     })
     .then((r) => r.content);
 
@@ -91,10 +93,10 @@ export async function mixtureOfAgents(members: CouncilMember[], prompt: string, 
       prior.length === 0
         ? prompt
         : `Other models proposed answers to the question. Use them as reference, then give your own improved answer.\n\nQuestion:\n${prompt}\n\nReferences:\n${refs(prior)}`;
-    prior = await Promise.all(members.map((m) => ask(m, layerPrompt, opts.system)));
+    prior = await Promise.all(members.map((m) => ask(m, layerPrompt, opts.system, opts.category)));
     layerOutputs.push(prior);
   }
   const aggregator = opts.aggregator ?? members[0]!;
-  const final = await ask(aggregator, `Synthesize the single best answer to the question from these candidate responses.\n\nQuestion:\n${prompt}\n\nCandidates:\n${refs(prior)}`, opts.system);
+  const final = await ask(aggregator, `Synthesize the single best answer to the question from these candidate responses.\n\nQuestion:\n${prompt}\n\nCandidates:\n${refs(prior)}`, opts.system, opts.category);
   return { final, layerOutputs };
 }

@@ -499,9 +499,14 @@ commit per item. Highest-leverage order:
    loop, applied to any answer. Library function (item 4's consumer). Tests: one-revision-then-approve,
    approved-first-answer, budget-cap-on-never-satisfied-critic (125/125 green). ponytail ceiling: single
    critic voice, no separate verifier model — a distinct judge/verifier is the named upgrade.
-4. **Difficulty / effort router** — a cheap classifier (heuristic first; small-model upgrade later) picks
-   effort per query: trivial→single call, medium→self-consistency, hard→MoA/orchestration. The meta-controller
-   that spends compute where it pays and saves tokens elsewhere; reports chosen effort into the token report.
+4. **Difficulty / effort router** — ✅ DONE. `reasoning/effort.ts`: `classifyEffort(prompt)` (heuristic:
+   length + reasoning-marker keywords + question count) picks trivial/medium/hard; `effortRoute(router,
+   model, prompt, opts)` dispatches trivial→single call, medium→`bestOfN`, hard→`mixtureOfAgents`, and tags
+   each call's usage `category` as `effort:<level>` so the token report shows where compute went. Surfaced
+   as the `solve` agent tool + `vishu.reasoning_solve` RPC (the suite's front door), wired in `serve`. Tests:
+   classifier tiers + all three dispatch paths (129/129 green). ponytail ceilings: keyword/length heuristic
+   (small-model classifier is the named upgrade); hard path defaults to a single-Router MoA — pass
+   `members` from the RoleRegistry for a true multi-model ensemble.
 
 **Set C — frontier mitigations that differentiate (bounded, honest ceilings, NOT "solved"):**
 5. **Deterministic record/replay** — record each Router call (prompt hash → response) to a cassette under
@@ -548,8 +553,8 @@ analyzer — codegraph/LLM-proposed improvements remain the upgrade); **digital-
 **agent-level task queue**. (Details in the Phase-15 "Shipped" section above.)
 
 Still open:
-- **Capability amplifiers** — self-consistency/best-of-N, Mixture-of-Agents, Reflexion, difficulty/effort
-  router. *(Approved; planned as items 1–4 in the Next-session section.)*
+- **Capability amplifiers** — ✅ DONE (items 1–4): self-consistency/best-of-N, Mixture-of-Agents, Reflexion,
+  difficulty/effort router. `reasoning/` module + `solve`/`best_of_n` tools + `vishu.reasoning_*` RPC.
 - **Set C frontier mitigations** — record/replay, cross-session identity, self-healing memory, eval harness.
   *(Planned as items 5–8 in the Next-session section.)*
 - **Packaged desktop installer** (Tauri bundle); CORS is done, bundle/signing toolchain still needed. Absorb

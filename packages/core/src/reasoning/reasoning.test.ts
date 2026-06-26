@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { ScriptedProvider } from "../providers/mock.js";
 import { Router } from "../providers/router.js";
 import type { ChatResponse } from "../providers/types.js";
+import { classifyEffort, effortRoute } from "./effort.js";
 import { reflexion } from "./reflexion.js";
 import { bestOfN } from "./selfconsistency.js";
 
@@ -56,4 +57,28 @@ test("reflexion: the iteration budget stops a never-satisfied critic", async () 
   const res = await reflexion(routerOf("d", "bad", "d2"), "m", "q", { maxIterations: 1 });
   assert.equal(res.answer, "d2");
   assert.equal(res.iterations, 1);
+});
+
+test("classifyEffort: length and reasoning markers set the tier", () => {
+  assert.equal(classifyEffort("What time is it?"), "trivial");
+  assert.equal(classifyEffort("Design a distributed rate limiter for our API gateway."), "hard");
+  assert.equal(classifyEffort("Write a short upbeat product blurb for a reusable steel water bottle aimed at hikers."), "medium");
+});
+
+test("effortRoute: trivial → one call", async () => {
+  const res = await effortRoute(routerOf("quick"), "m", "q", { classify: () => "trivial" });
+  assert.equal(res.effort, "trivial");
+  assert.equal(res.answer, "quick");
+});
+
+test("effortRoute: medium → self-consistency vote", async () => {
+  const res = await effortRoute(routerOf("A", "A", "B"), "m", "q", { classify: () => "medium", n: 3 });
+  assert.equal(res.effort, "medium");
+  assert.equal(res.answer, "A");
+});
+
+test("effortRoute: hard → MoA on a single Router (2 layers + aggregate)", async () => {
+  const res = await effortRoute(routerOf("p1", "p2", "final"), "m", "q", { classify: () => "hard" });
+  assert.equal(res.effort, "hard");
+  assert.equal(res.answer, "final");
 });
