@@ -30,6 +30,8 @@ import { DigitalTwin } from "../personalization/twin.js";
 import { registerEvolve, registerTwin } from "../personalization/rpc.js";
 import { registerOrchestrationTools } from "../orchestration/tools.js";
 import { buildRoles } from "../orchestration/roles.js";
+import { registerReasoning } from "../reasoning/rpc.js";
+import { registerReasoningTools } from "../reasoning/tools.js";
 import { buildRouter } from "../providers/factory.js";
 import { RunLog } from "../reliability/runlog.js";
 import { makePolicy } from "../security/policy.js";
@@ -129,6 +131,8 @@ async function serve(): Promise<number> {
   registerMemory(registry, memory);
   registerUsage(registry, config.paths.workspaceDir);
   registerOrchestrationTools(tools, { roles, model: config.provider.model });
+  registerReasoningTools(tools, { router, model: config.provider.model });
+  registerReasoning(registry, { router, model: config.provider.model });
   const sessions = new SessionStore();
   const twin = new DigitalTwin(join(config.paths.workspaceDir, "twin.json"));
   const agentService = new AgentService({

@@ -479,9 +479,14 @@ sampling, verification, ensembling, and reflection recover a lot of it.) Build o
 commit per item. Highest-leverage order:
 
 **Capability amplifiers (pure-code over the existing Router / council / multi-provider — no new deps):**
-1. **Self-consistency + best-of-N** — sample N candidates (temperature spread), select by majority vote or
-   a verifier/judge model (reuse council's judge). The core test-time-compute lever. New `reasoning/`
-   module; expose as an agent tool + RPC. Tests: majority aggregation, verifier selection, N=1 degenerate.
+1. **Self-consistency + best-of-N** — ✅ DONE. `reasoning/selfconsistency.ts` `bestOfN(router, model, prompt,
+   opts)` samples N candidates across a [0.2,1.0] temperature spread and selects by majority **vote** (default,
+   ties → first-seen) or a **judge** model (bracket-pick, mirrors `council.ts`). Exposed as the `best_of_n`
+   agent tool (`reasoning/tools.ts`) + `vishu.reasoning_best_of_n` RPC (`reasoning/rpc.ts`), both wired in
+   `serve`. Tests cover majority aggregation, tie-break, judge selection, and N=1 degenerate (119/119 green).
+   ponytail ceilings: vote normalization is string-equality (trim/lower/collapse ws) not semantic — a verifier
+   that scores free-form answers is the named upgrade; samples run concurrently on one Router (multi-model
+   spread rides item 2's MoA).
 2. **Mixture-of-Agents** — layered ensemble: N proposers answer → an aggregator synthesizes → repeat L
    layers. Uses multi-provider for a true multi-model ensemble; degrades to one Router. Extends `council.ts`.
 3. **Reflexion self-critique** — generate → model critiques its own answer → revise, bounded (extends
