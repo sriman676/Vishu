@@ -81,3 +81,18 @@ test("precedence: explicit VISHU_API_KEY beats a standard env var", () => {
   const cfg = loadConfig({ VISHU_PROVIDER: "openai", VISHU_API_KEY: "explicit", OPENAI_API_KEY: "ignored" } as NodeJS.ProcessEnv);
   assert.deepEqual(cfg.provider.apiKeys, ["explicit"]);
 });
+
+test("auto-detect from key prefix: nvapi- → NVIDIA NIM, sk-ant- → anthropic", () => {
+  const n = loadConfig({ VISHU_API_KEY: "nvapi-abc123" } as NodeJS.ProcessEnv);
+  assert.equal(n.provider.type, "openai");
+  assert.equal(n.provider.baseUrl, "https://integrate.api.nvidia.com/v1");
+  assert.equal(n.provider.model, "meta/llama-3.1-8b-instruct");
+
+  const a = loadConfig({ VISHU_API_KEY: "sk-ant-xyz" } as NodeJS.ProcessEnv);
+  assert.equal(a.provider.type, "anthropic");
+
+  // an explicit VISHU_API_KEY outranks a stray ambient provider env var (e.g. ANTHROPIC_API_KEY)
+  const mixed = loadConfig({ VISHU_API_KEY: "nvapi-abc", ANTHROPIC_API_KEY: "sk-ant-ambient" } as NodeJS.ProcessEnv);
+  assert.equal(mixed.provider.baseUrl, "https://integrate.api.nvidia.com/v1");
+  assert.deepEqual(mixed.provider.apiKeys, ["nvapi-abc"]);
+});

@@ -56,7 +56,20 @@ const PRESETS: Record<string, { type: ProviderType; baseUrl: string; model: stri
   openrouter: { type: "openai", baseUrl: "https://openrouter.ai/api/v1", model: "openai/gpt-4o-mini" },
   groq: { type: "openai", baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
   deepseek: { type: "openai", baseUrl: "https://api.deepseek.com", model: "deepseek-chat" },
+  nvidia: { type: "openai", baseUrl: "https://integrate.api.nvidia.com/v1", model: "meta/llama-3.1-8b-instruct" },
 };
+
+/** Identify a provider from an API key's prefix — lets auto-detect recognise a key pasted straight into
+ * VISHU_API_KEY (not just provider-named env vars). Order matters: specific prefixes before the bare sk-. */
+function detectFromKey(key: string): string | undefined {
+  if (key.startsWith("nvapi-")) return "nvidia";
+  if (key.startsWith("sk-ant-")) return "anthropic";
+  if (key.startsWith("sk-or-")) return "openrouter";
+  if (key.startsWith("gsk_")) return "groq";
+  if (key.startsWith("AIza")) return "gemini";
+  if (key.startsWith("sk-")) return "openai";
+  return undefined;
+}
 
 /** Standard provider env-var names, scanned in order to auto-detect the provider + key when
  * VISHU_PROVIDER is unset. First one present wins. Each may hold a comma-separated list (N keys). */
@@ -68,6 +81,7 @@ const ENV_KEYS: { provider: string; env: string }[] = [
   { provider: "openrouter", env: "OPENROUTER_API_KEY" },
   { provider: "groq", env: "GROQ_API_KEY" },
   { provider: "deepseek", env: "DEEPSEEK_API_KEY" },
+  { provider: "nvidia", env: "NVIDIA_API_KEY" },
 ];
 
 /** CSV or single value → trimmed list. Comma-separated = N keys for failover. */
@@ -79,9 +93,14 @@ export function resolveProvider(
   env: NodeJS.ProcessEnv,
   file: { provider?: Partial<ProviderConfig> & { apiKeys?: KeyEntry[] } },
 ): ProviderConfig {
-  // Auto-detect: with no explicit provider, pick the first standard provider env var that's set.
+  // Auto-detect with no explicit provider: first a standard provider env var, then the key's own prefix
+  // (so a key pasted into VISHU_API_KEY is recognised too), else the offline mock.
+  // An explicit VISHU_API_KEY (and its prefix) outranks ambient provider env vars like a stray
+  // ANTHROPIC_API_KEY left in the shell — the user pasted that key on purpose.
+  const explicitKey = splitKeys(env.VISHU_API_KEYS)[0] || env.VISHU_API_KEY;
   const detected = ENV_KEYS.find((e) => env[e.env]);
-  const name = env.VISHU_PROVIDER || file.provider?.type || detected?.provider || "mock";
+  const name =
+    env.VISHU_PROVIDER || file.provider?.type || (explicitKey ? detectFromKey(explicitKey) : undefined) || detected?.provider || "mock";
 
   // A friendly preset (gemini/openrouter/…) resolves to an adapter type + endpoint + default model.
   const preset = PRESETS[name];
