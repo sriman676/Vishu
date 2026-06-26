@@ -27,6 +27,7 @@ export async function triageMessage(router: Router, model: string, msg: InboundM
       },
       { role: "user", content: `From ${msg.from} on ${msg.channel}:\n${msg.text}` },
     ],
+    category: "connectors",
   });
   return parseTriage(res.content);
 }

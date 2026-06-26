@@ -34,6 +34,9 @@ import { runToolLoop } from "../tools/loop.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { Terminal } from "../tools/terminal.js";
 import { initToken } from "../transport/auth.js";
+import { registerUsage } from "../usage/rpc.js";
+import { UsageLog, readUsage } from "../usage/log.js";
+import { buildReport, renderReport } from "../usage/report.js";
 import { buildRegistry } from "../transport/all.js";
 import { bus } from "../transport/events.js";
 import { rpcCall, readToken } from "../transport/client.js";
@@ -90,6 +93,12 @@ function usageErr(usage: string): number {
   return 1;
 }
 
+/** Token ledger under the private workspace — every command's model calls funnel through it. */
+function usageLog(config: ReturnType<typeof loadConfig>): UsageLog {
+  mkdirSync(config.paths.workspaceDir, { recursive: true });
+  return new UsageLog(join(config.paths.workspaceDir, "usage.jsonl"));
+}
+
 async function serve(): Promise<number> {
   const config = loadConfig();
   initToken(config.paths.workspaceDir);
@@ -99,7 +108,7 @@ async function serve(): Promise<number> {
   const skills = new SkillIndex();
   skills.loadDir(config.paths.skillsDir);
   registerSkillTools(tools, skills);
-  const router = buildRouter(config.provider);
+  const router = buildRouter(config.provider, usageLog(config));
   const memory = new MemoryStore(
     config.paths.vaultDir,
     config.paths.memoryDbFile,
@@ -108,6 +117,7 @@ async function serve(): Promise<number> {
   );
   registerMemoryTools(tools, memory);
   registerMemory(registry, memory);
+  registerUsage(registry, config.paths.workspaceDir);
   registerOrchestrationTools(tools, { router, model: config.provider.model });
   const agentService = new AgentService({
     router,
@@ -144,7 +154,7 @@ async function serve(): Promise<number> {
     const p = (params ?? {}) as { messages?: { role: string; content?: { text?: string } }[] };
     const messages = (p.messages ?? []).map((m) => ({ role: m.role as "user" | "assistant" | "system", content: m.content?.text ?? "" }));
     let text = "";
-    await router.chatStream({ model: config.provider.model, messages }, (d) => (text += d));
+    await router.chatStream({ model: config.provider.model, messages, category: "mcp" }, (d) => (text += d));
     return { role: "assistant", content: { type: "text", text }, model: config.provider.model };
   };
   await connectMcpServers(tools, bus, sampler);
@@ -166,9 +176,9 @@ async function serve(): Promise<number> {
 
 async function chat(text: string): Promise<number> {
   const config = loadConfig();
-  const router = buildRouter(config.provider);
+  const router = buildRouter(config.provider, usageLog(config));
   await router.chatStream(
-    { model: config.provider.model, messages: [{ role: "user", content: text }] },
+    { model: config.provider.model, messages: [{ role: "user", content: text }], category: "chat" },
     (d) => process.stdout.write(d),
   );
   process.stdout.write("\n");
@@ -181,7 +191,7 @@ async function agent(text: string): Promise<number> {
   const registry = registerBuiltins(new ToolRegistry());
   const result = await runToolLoop(
     {
-      router: buildRouter(config.provider),
+      router: buildRouter(config.provider, usageLog(config)),
       registry,
       policy: makePolicy("full", config.paths.actionDir),
       terminal: new Terminal(config.paths.actionDir),
@@ -200,7 +210,7 @@ async function agent(text: string): Promise<number> {
 async function build(goal: string): Promise<number> {
   const config = loadConfig();
   mkdirSync(config.paths.actionDir, { recursive: true });
-  const router = buildRouter(config.provider);
+  const router = buildRouter(config.provider, usageLog(config));
   const model = config.provider.model;
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
@@ -261,6 +271,16 @@ async function build(goal: string): Promise<number> {
   }
 }
 
+/** Weekly token report straight from the local ledger (no running core needed). */
+function report(daysArg?: string): number {
+  const config = loadConfig();
+  const days = daysArg ? Number(daysArg) : 7;
+  if (!Number.isFinite(days) || days <= 0) return usageErr("vishu report [days]");
+  const records = readUsage(join(config.paths.workspaceDir, "usage.jsonl"));
+  process.stdout.write(`${renderReport(buildReport(records, days * 86_400_000), days)}\n`);
+  return 0;
+}
+
 async function rpc(method: string, paramsJson?: string): Promise<number> {
   const config = loadConfig();
   const token = readToken(config.paths.workspaceDir);
@@ -297,6 +317,7 @@ async function main(argv: string[]): Promise<number> {
     if (!text) return usageErr("vishu build <what to build>");
     return build(text);
   }
+  if (cmd === "report") return report(argv[1]);
   if (cmd === "rpc") {
     const method = argv[1];
     if (!method) return usageErr("vishu rpc <method> [jsonParams]");
@@ -314,6 +335,7 @@ async function main(argv: string[]): Promise<number> {
       "  vishu chat <message>         one-shot chat via the configured provider",
       "  vishu agent <task>           run the tool loop (build/run inside action_dir)",
       "  vishu build <what>           guided secure app builder: spec interview → build → pentest",
+      "  vishu report [days]          weekly token report: where tokens go + where they're wasted",
       "  vishu rpc <method> [json]    call a method on a running core",
       "",
     ].join("\n"),

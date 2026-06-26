@@ -93,6 +93,7 @@ export async function llmReview(router: Router, model: string, code: string): Pr
       { role: "system", content: "You are a security reviewer. List concrete OWASP Top-10 issues in this code, one per line, or reply 'none'." },
       { role: "user", content: code.slice(0, 8000) },
     ],
+    category: "appbuilder",
   });
   return res.content.trim();
 }

@@ -77,13 +77,14 @@ export class OpenAICompatibleProvider implements Provider {
       body: this.body(req, false),
     });
     if (!res.ok) throw statusError(res.status, await res.text());
-    const json = (await res.json()) as { choices?: OAChoice[] };
+    const json = (await res.json()) as { choices?: OAChoice[]; usage?: { prompt_tokens?: number; completion_tokens?: number } };
     const choice = json.choices?.[0];
     const toolCalls = parseToolCalls(choice?.message);
     return {
       content: choice?.message?.content ?? "",
       toolCalls,
       finish: toolCalls ? "tool_calls" : choice?.finish_reason === "length" ? "length" : "stop",
+      usage: json.usage ? { promptTokens: json.usage.prompt_tokens ?? 0, completionTokens: json.usage.completion_tokens ?? 0 } : undefined,
     };
   }
 

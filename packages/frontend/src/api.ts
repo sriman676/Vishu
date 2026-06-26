@@ -28,6 +28,34 @@ export interface TurnResult {
 export const startTurn = (token: string, message: string, sessionId?: string) =>
   rpc<TurnResult>(token, "vishu.agent_start_turn", { message, sessionId });
 
+export interface CategoryStat {
+  category: string;
+  calls: number;
+  tokens: number;
+  pct: number;
+  usd: number;
+}
+export interface WasteItem {
+  kind: "context_bloat" | "model_overkill" | "duplicate";
+  calls: number;
+  tokens: number;
+  usd: number;
+  action: string;
+}
+export interface TokenReport {
+  days: number;
+  totalCalls: number;
+  totalTokens: number;
+  totalUsd: number;
+  byCategory: CategoryStat[];
+  waste: WasteItem[];
+  savingsTokens: number;
+  savingsUsd: number;
+}
+
+export const tokenReport = (token: string, days = 7) =>
+  rpc<TokenReport>(token, "vishu.token_report", { days });
+
 /** Subscribe to the core's SSE bus (tool:sync, notifications). Returns an unsubscribe. */
 export function subscribeEvents(token: string, onEvent: (e: unknown) => void): () => void {
   const es = new EventSource(`/events?token=${encodeURIComponent(token)}`);

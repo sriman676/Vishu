@@ -30,6 +30,7 @@ export async function council(members: CouncilMember[], prompt: string, opts: Co
         await m.router.chat({
           model: m.model,
           messages: [...(opts.system ? [{ role: "system" as const, content: opts.system }] : []), { role: "user", content: prompt }],
+          category: "orchestration",
         })
       ).content,
     })),
@@ -45,6 +46,7 @@ export async function council(members: CouncilMember[], prompt: string, opts: Co
       { role: "system", content: "Pick the single best answer. Reply with only its bracket number." },
       { role: "user", content: `Question:\n${prompt}\n\nCandidates:\n${ballot}` },
     ],
+    category: "orchestration",
   });
   const idx = Number(/\d+/.exec(pick.content)?.[0] ?? "0");
   const chosenIndex = Number.isInteger(idx) && idx >= 0 && idx < answers.length ? idx : 0;

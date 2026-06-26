@@ -28,6 +28,8 @@ export class OllamaProvider implements Provider {
     const json = (await res.json()) as {
       message?: { content?: string; tool_calls?: { function: { name: string; arguments: Record<string, unknown> } }[] };
       done_reason?: string;
+      prompt_eval_count?: number;
+      eval_count?: number;
     };
     const toolCalls: ToolCall[] | undefined = json.message?.tool_calls?.map((c, i) => ({
       id: `ollama-${i}`,
@@ -38,6 +40,10 @@ export class OllamaProvider implements Provider {
       content: json.message?.content ?? "",
       toolCalls: toolCalls?.length ? toolCalls : undefined,
       finish: toolCalls?.length ? "tool_calls" : "stop",
+      usage:
+        json.prompt_eval_count !== undefined || json.eval_count !== undefined
+          ? { promptTokens: json.prompt_eval_count ?? 0, completionTokens: json.eval_count ?? 0 }
+          : undefined,
     };
   }
 

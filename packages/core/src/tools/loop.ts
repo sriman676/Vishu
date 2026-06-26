@@ -38,7 +38,7 @@ export async function runToolLoop(
 ): Promise<ToolLoopResult> {
   for (let i = 1; i <= maxIterations; i++) {
     const sent = deps.compact === false ? messages : compactTranscript(messages);
-    const res = await deps.router.chat({ model: deps.model, messages: sent, tools: deps.registry.schemas() });
+    const res = await deps.router.chat({ model: deps.model, messages: sent, tools: deps.registry.schemas(), category: "agent" });
     deps.budget?.charge(estimateTokens(sent.map((m) => m.content).join("\n")), estimateTokens(res.content));
 
     messages.push({ role: "assistant", content: res.content, toolCalls: res.toolCalls });

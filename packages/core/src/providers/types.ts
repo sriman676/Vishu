@@ -26,12 +26,16 @@ export interface ChatRequest {
   tools?: ToolSchema[];
   temperature?: number;
   maxTokens?: number;
+  /** Where this call comes from (agent/appbuilder/orchestration/…) — drives the token report. */
+  category?: string;
 }
 
 export interface ChatResponse {
   content: string;
   toolCalls?: ToolCall[];
   finish: "stop" | "tool_calls" | "length";
+  /** Real provider usage when reported; absent for streams/providers that omit it (then estimated). */
+  usage?: { promptTokens: number; completionTokens: number };
 }
 
 export type OnDelta = (text: string) => void;

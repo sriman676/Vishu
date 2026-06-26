@@ -40,6 +40,7 @@ export class AnthropicProvider implements Provider {
     const json = (await res.json()) as {
       content?: ({ type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> })[];
       stop_reason?: string;
+      usage?: { input_tokens?: number; output_tokens?: number };
     };
     let content = "";
     const toolCalls: ToolCall[] = [];
@@ -51,6 +52,7 @@ export class AnthropicProvider implements Provider {
       content,
       toolCalls: toolCalls.length ? toolCalls : undefined,
       finish: toolCalls.length ? "tool_calls" : json.stop_reason === "max_tokens" ? "length" : "stop",
+      usage: json.usage ? { promptTokens: json.usage.input_tokens ?? 0, completionTokens: json.usage.output_tokens ?? 0 } : undefined,
     };
   }
 

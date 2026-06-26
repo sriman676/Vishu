@@ -49,6 +49,7 @@ export async function interviewStep(router: Router, model: string, goal: string,
       { role: "system", content: SYSTEM },
       { role: "user", content: `Goal: ${goal}\n\n${qa}`.trim() },
     ],
+    category: "appbuilder",
   });
   const idx = res.content.indexOf("SPEC:");
   if (idx >= 0) {

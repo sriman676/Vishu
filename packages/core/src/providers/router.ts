@@ -1,22 +1,45 @@
+import type { UsageLog } from "../usage/log.js";
 import { isTransient } from "./transient.js";
 import type { ChatRequest, ChatResponse, OnDelta, Provider } from "./types.js";
+
+const estimate = (text: string): number => Math.ceil(text.length / 4);
 
 /**
  * Rotates through providers/keys on transient/quota errors (429/5xx/timeout); a fatal error
  * (e.g. 400/401) surfaces immediately. Each endpoint is one provider already bound to one key,
- * so iterating endpoints rotates both provider and key.
+ * so iterating endpoints rotates both provider and key. Every model call funnels through here, so
+ * it is also where token usage is captured (optional UsageLog) for the weekly token report.
  */
 export class Router {
-  constructor(private readonly endpoints: Provider[]) {
+  constructor(
+    private readonly endpoints: Provider[],
+    private readonly usageLog?: UsageLog,
+  ) {
     if (endpoints.length === 0) throw new Error("[router] no providers configured");
   }
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
-    return this.run((p) => p.chat(req));
+    const res = await this.run((p) => p.chat(req));
+    this.logUsage(req, res);
+    return res;
   }
 
   async chatStream(req: ChatRequest, onDelta: OnDelta): Promise<ChatResponse> {
-    return this.run((p) => p.chatStream(req, onDelta));
+    const res = await this.run((p) => p.chatStream(req, onDelta));
+    this.logUsage(req, res);
+    return res;
+  }
+
+  /** Record one call's token usage; fall back to chars/4 when the provider/stream omits real usage. */
+  private logUsage(req: ChatRequest, res: ChatResponse): void {
+    if (!this.usageLog) return;
+    this.usageLog.record({
+      ts: Date.now(),
+      model: req.model,
+      category: req.category ?? "other",
+      promptTokens: res.usage?.promptTokens ?? estimate(req.messages.map((m) => m.content).join("\n")),
+      completionTokens: res.usage?.completionTokens ?? estimate(res.content),
+    });
   }
 
   /** True if any endpoint can embed — lets memory decide whether to enable semantic recall. */

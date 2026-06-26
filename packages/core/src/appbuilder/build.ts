@@ -67,6 +67,7 @@ export async function specVerify(
       },
       { role: "user", content: `Chunk: ${chunk}\n\nSpec:\n${specToMarkdown(spec)}\n\nCode produced:\n${digest(worktreeDir) || "(no files)"}` },
     ],
+    category: "appbuilder",
   });
   return { ok: /^\s*PASS\b/i.test(res.content), output: res.content.trim().slice(0, 200) };
 }
@@ -89,6 +90,7 @@ async function decompose(router: Router, model: string, spec: AppSpec, max: numb
       { role: "system", content: "Break the app into independent build chunks, one per line, no prose." },
       { role: "user", content: `${specToMarkdown(spec)}\n\nList up to ${max} build chunks.` },
     ],
+    category: "appbuilder",
   });
   const chunks = res.content
     .split("\n")
