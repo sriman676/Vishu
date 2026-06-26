@@ -9,7 +9,7 @@ import { formatFindings } from "../appbuilder/security.js";
 import { type AppSpec, type InterviewTurn, interviewStep, persistSpec, specToMarkdown } from "../appbuilder/spec.js";
 import { AgentService } from "../agent/service.js";
 import { loadConfig } from "../config/config.js";
-import { registerAutomation } from "../automation/rpc.js";
+import { registerAutomation, registerAutofix } from "../automation/rpc.js";
 import { SchedulerGate } from "../automation/gate.js";
 import { attachNotificationSink } from "../automation/notify.js";
 import { startResourceGuard } from "../automation/sensor.js";
@@ -171,6 +171,12 @@ async function serve(): Promise<number> {
     runLog: new RunLog(),
   });
   registerAutomation(registry, workflows, triggers);
+  registerAutofix(registry, {
+    actionDir: config.paths.actionDir,
+    autonomy: "automatic",
+    runAgent: async (prompt) => (await agentService.startTurn(undefined, prompt)).final,
+    bus,
+  });
   triggers.start();
 
   // Phase 13: self-evolving loop — scan the action dir for cheap improvements on a daily cron and

@@ -1,4 +1,9 @@
+import type { Autonomy } from "../reliability/approvals.js";
+import { shellValidator } from "../reliability/verify.js";
+import { Terminal } from "../tools/terminal.js";
+import type { EventBus } from "../transport/events.js";
 import { err, ok, type Registry } from "../transport/rpc.js";
+import { autoFixPass } from "./autofix.js";
 import type { TriggerManager, Trigger } from "./triggers.js";
 import type { WorkflowStore, Workflow } from "./workflows.js";
 
@@ -19,4 +24,40 @@ export function registerAutomation(registry: Registry, store: WorkflowStore, man
   });
 
   registry.register("vishu.automation_list", () => ok({ workflows: store.list(), triggers: manager.list() }));
+}
+
+export interface AutofixDeps {
+  /** Where the validator command runs (the agent's action directory). */
+  actionDir: string;
+  /** Only fixes unattended at `automatic`; otherwise the failure is parked for approval. */
+  autonomy: Autonomy;
+  /** Performs the fix — an agent turn handed the failure output. */
+  runAgent: (prompt: string) => Promise<string>;
+  bus?: EventBus;
+}
+
+/** Expose the backend error auto-fix loop over `vishu.autofix` — its poke source (a manual RPC call, or
+ * a Phase 9 file/cron trigger calling it). Runs a shell command; on failure, dispatches a bounded
+ * agent fix loop and re-verifies. The deterministic command exit code is the gate, never an LLM verdict. */
+export function registerAutofix(registry: Registry, deps: AutofixDeps): void {
+  registry.register("vishu.autofix", async (params) => {
+    const p = (params ?? {}) as { command?: string; maxAttempts?: number };
+    if (!p.command) return err("invalid_params", "command is required");
+    const command = p.command;
+    const terminal = new Terminal(deps.actionDir);
+    try {
+      const result = await autoFixPass({
+        validator: shellValidator(terminal, command),
+        autonomy: deps.autonomy,
+        maxAttempts: p.maxAttempts,
+        fix: async (failure) => {
+          await deps.runAgent(`The command \`${command}\` failed:\n${failure}\n\nFix the code in the action directory so it passes. Do not run unrelated tasks.`);
+        },
+        onParked: (output) => deps.bus?.publish({ domain: "system", type: "notification", payload: { kind: "autofix_parked", command, output: output.slice(0, 500) } }),
+      });
+      return ok(result);
+    } finally {
+      terminal.close();
+    }
+  });
 }
