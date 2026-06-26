@@ -206,7 +206,8 @@ async function serve(): Promise<number> {
   const modulesOn = await loadModules(MODULES, { tools, rpc: registry, bus, workspaceDir: config.paths.workspaceDir });
   if (modulesOn.length) process.stdout.write(`[modules] enabled: ${modulesOn.join(", ")}\n`);
 
-  const running = await startServer(registry, host(), config.port, bus);
+  const corsOrigins = process.env.VISHU_CORS_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean);
+  const running = await startServer(registry, host(), config.port, bus, corsOrigins);
   const base = `http://${host()}:${running.port}`;
   process.stdout.write(`[serve] vishu ${version()} on ${base}\n`);
   process.stdout.write(`[serve] token: ${join(config.paths.workspaceDir, "core.token")}\n`);

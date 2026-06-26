@@ -25,6 +25,34 @@ test("health_snapshot round-trips over RPC with a valid token", async () => {
   }
 });
 
+test("CORS: preflight + allowed origin echoes headers; a disallowed origin gets none", async () => {
+  const token = initToken(mkdtempSync(join(tmpdir(), "vishu-")));
+  const server = await startServer(buildRegistry("9.9.9", 0), "127.0.0.1", 0, undefined, ["tauri://localhost"]);
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+
+    // Preflight from the packaged webview origin → 204 with the allow headers.
+    const pre = await fetch(`${base}/rpc`, { method: "OPTIONS", headers: { origin: "tauri://localhost" } });
+    assert.equal(pre.status, 204);
+    assert.equal(pre.headers.get("access-control-allow-origin"), "tauri://localhost");
+    assert.match(pre.headers.get("access-control-allow-headers") ?? "", /authorization/);
+
+    // Actual POST from the allowed origin → response carries the allow-origin header.
+    const ok = await fetch(`${base}/rpc`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}`, origin: "tauri://localhost" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "vishu.health_snapshot" }),
+    });
+    assert.equal(ok.headers.get("access-control-allow-origin"), "tauri://localhost");
+
+    // A different origin is not on the allowlist → no CORS header (browser would block it).
+    const bad = await fetch(`${base}/rpc`, { method: "OPTIONS", headers: { origin: "https://evil.example" } });
+    assert.equal(bad.headers.get("access-control-allow-origin"), null);
+  } finally {
+    await server.close();
+  }
+});
+
 test("SSE /events streams bus events to an authenticated client and rejects without a token", async () => {
   const token = initToken(mkdtempSync(join(tmpdir(), "vishu-")));
   const bus = new EventBus();

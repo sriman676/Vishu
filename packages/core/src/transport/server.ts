@@ -8,6 +8,24 @@ export interface RunningServer {
   close: () => Promise<void>;
 }
 
+/** Packaged-desktop webview origins (Tauri) — the default CORS allowlist so the bundled app can reach
+ * the loopback core cross-origin. Auth (bearer token) still gates every call; CORS only unblocks the
+ * browser. Override via VISHU_CORS_ORIGINS (CSV, or "*"). */
+const DEFAULT_CORS_ORIGINS = ["tauri://localhost", "https://tauri.localhost", "http://tauri.localhost"];
+
+/** CORS headers to echo for an allowed Origin, or {} when the origin isn't allowed (browser then blocks).
+ * No credentials mode — auth rides the Authorization header, not cookies — so reflecting the origin is safe. */
+function corsHeadersFor(origin: string | undefined, allowed: string[]): Record<string, string> {
+  if (!origin || !(allowed.includes("*") || allowed.includes(origin))) return {};
+  return {
+    "access-control-allow-origin": allowed.includes("*") ? "*" : origin,
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-headers": "authorization, content-type",
+    "access-control-max-age": "86400",
+    vary: "Origin",
+  };
+}
+
 async function readBody(req: import("node:http").IncomingMessage, limit = 1_000_000): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -19,14 +37,23 @@ async function readBody(req: import("node:http").IncomingMessage, limit = 1_000_
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** Start the JSON-RPC + health HTTP server, bound to loopback only. */
-export function startServer(registry: Registry, host: string, port: number, eventBus?: EventBus): Promise<RunningServer> {
+/** Start the JSON-RPC + health HTTP server, bound to loopback only. `corsOrigins` allows the packaged
+ * desktop webview to reach the core cross-origin (defaults to the Tauri origins). */
+export function startServer(registry: Registry, host: string, port: number, eventBus?: EventBus, corsOrigins?: string[]): Promise<RunningServer> {
+  const allowed = corsOrigins ?? DEFAULT_CORS_ORIGINS;
   const server: Server = createServer((req, res) => {
     void (async () => {
+      const cors = corsHeadersFor(req.headers.origin, allowed);
       const send = (code: number, body: unknown) => {
-        res.writeHead(code, { "content-type": "application/json" });
+        res.writeHead(code, { "content-type": "application/json", ...cors });
         res.end(JSON.stringify(body));
       };
+
+      // CORS preflight: browsers send OPTIONS before a request carrying the Authorization header.
+      if (req.method === "OPTIONS") {
+        res.writeHead(204, cors);
+        return res.end();
+      }
 
       // /health is unauthenticated liveness.
       if (req.method === "GET" && req.url === "/health") {
@@ -38,7 +65,7 @@ export function startServer(registry: Registry, host: string, port: number, even
         const token = new URL(req.url, "http://x").searchParams.get("token");
         if (!checkBearer(token ? `Bearer ${token}` : undefined)) return send(401, { error: "Unauthorized" });
         if (!eventBus) return send(404, { error: "no event bus" });
-        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive", ...cors });
         res.flushHeaders(); // send headers now so clients connect before the first event (no deadlock)
         const off = eventBus.subscribe((e) => res.write(`data: ${JSON.stringify(e)}\n\n`));
         req.on("close", off);
