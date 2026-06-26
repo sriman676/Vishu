@@ -13,6 +13,7 @@ import { initToken } from "../transport/auth.js";
 import { rpcCall } from "../transport/client.js";
 import { Registry } from "../transport/rpc.js";
 import { startServer } from "../transport/server.js";
+import { DigitalTwin } from "../personalization/twin.js";
 import { registerAgent } from "./rpc.js";
 import { AgentService } from "./service.js";
 
@@ -43,4 +44,21 @@ test("a frontend-shaped client drives a full agent turn over RPC", async () => {
   } finally {
     await server.close();
   }
+});
+
+test("startTurn auto-records the user prompt into the digital twin", async () => {
+  const actionDir = mkdtempSync(join(tmpdir(), "vishu-act-"));
+  const twin = new DigitalTwin(join(mkdtempSync(join(tmpdir(), "vishu-twin-")), "twin.json"));
+  const service = new AgentService({
+    router: new Router([new ScriptedProvider([{ content: "ok", finish: "stop" }, { content: "ok", finish: "stop" }, { content: "ok", finish: "stop" }])]),
+    tools: registerBuiltins(new ToolRegistry()),
+    policy: makePolicy("full", actionDir),
+    terminal: new Terminal(actionDir),
+    model: "scripted",
+    twin,
+  });
+  await service.startTurn(undefined, "deploy the app");
+  await service.startTurn(undefined, "Deploy the app"); // same task, different case → same signature
+  await service.startTurn(undefined, "deploy the app");
+  assert.deepEqual(twin.suggestions(3), ["deploy the app"]); // 3 repeats crossed the threshold, unattended
 });
