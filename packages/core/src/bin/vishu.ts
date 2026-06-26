@@ -32,6 +32,8 @@ import { registerOrchestrationTools } from "../orchestration/tools.js";
 import { buildRoles } from "../orchestration/roles.js";
 import { registerReasoning } from "../reasoning/rpc.js";
 import { registerReasoningTools } from "../reasoning/tools.js";
+import { Cassette, type ReplayMode } from "../replay/cassette.js";
+import { registerReplay } from "../replay/rpc.js";
 import { buildRouter } from "../providers/factory.js";
 import { RunLog } from "../reliability/runlog.js";
 import { makePolicy } from "../security/policy.js";
@@ -118,7 +120,11 @@ async function serve(): Promise<number> {
   skills.loadDir(config.paths.skillsDir);
   registerSkillTools(tools, skills);
   const usage = usageLog(config);
-  const router = buildRouter(config.provider, usage);
+  // Deterministic record/replay: VISHU_REPLAY=record|replay funnels through the Router chokepoint.
+  const replayMode = (process.env.VISHU_REPLAY as ReplayMode) || "off";
+  const cassette = new Cassette(join(config.paths.workspaceDir, "cassette.json"), replayMode);
+  if (replayMode !== "off") process.stdout.write(`[replay] ${replayMode} → ${join(config.paths.workspaceDir, "cassette.json")}\n`);
+  const router = buildRouter(config.provider, usage, cassette);
   const roles = buildRoles(router, config.providers, config.roles, usage);
   if (roles.roles().length) process.stdout.write(`[roles] ${roles.roles().map((r) => `${r}→${config.roles[r]}`).join(", ")}\n`);
   const memory = new MemoryStore(
@@ -133,6 +139,7 @@ async function serve(): Promise<number> {
   registerOrchestrationTools(tools, { roles, model: config.provider.model });
   registerReasoningTools(tools, { router, model: config.provider.model });
   registerReasoning(registry, { router, model: config.provider.model });
+  registerReplay(registry, cassette);
   const sessions = new SessionStore();
   const twin = new DigitalTwin(join(config.paths.workspaceDir, "twin.json"));
   const agentService = new AgentService({

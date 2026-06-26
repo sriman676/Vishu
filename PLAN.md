@@ -509,9 +509,13 @@ commit per item. Highest-leverage order:
    `members` from the RoleRegistry for a true multi-model ensemble.
 
 **Set C — frontier mitigations that differentiate (bounded, honest ceilings, NOT "solved"):**
-5. **Deterministic record/replay** — record each Router call (prompt hash → response) to a cassette under
-   `workspaceDir`; a replay mode returns recorded responses (clean given the Router chokepoint + usage log).
-   Makes runs reproducible and tests hermetic — a real trust feature. Env/RPC toggle.
+5. **Deterministic record/replay** — ✅ DONE. `replay/cassette.ts` `Cassette` keys each Router call by a
+   sha256 of {model, messages, temperature, maxTokens, tools} → `ChatResponse`, persisted to
+   `workspaceDir/cassette.json`. `record` captures every call at the Router chokepoint; `replay` serves
+   recordings (streaming consumers still get `onDelta`), a miss falls through to the provider. Toggle via
+   `VISHU_REPLAY=record|replay` (wired in `serve`) or the `vishu.replay_status` RPC. Tests: record→replay
+   round-trip without re-calling the provider, replay-miss fall-through, off-mode never records (131/131).
+   ponytail ceiling: per-call file write (fine for a debug/test feature) — batch if a hot loop needs it.
 6. **Cross-session identity profile** — a persistent per-user profile (prefs, recurring context) loaded into
    the system prompt each session, updated from the twin + memory rollups. The "it actually knows me" feel.
 7. **Self-healing memory** — consolidation + eviction (bound unbounded growth) and contradiction/staleness

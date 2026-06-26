@@ -1,3 +1,4 @@
+import type { Cassette } from "../replay/cassette.js";
 import type { UsageLog } from "../usage/log.js";
 import { isTransient } from "./transient.js";
 import type { ChatRequest, ChatResponse, OnDelta, Provider } from "./types.js";
@@ -14,18 +15,32 @@ export class Router {
   constructor(
     private readonly endpoints: Provider[],
     private readonly usageLog?: UsageLog,
+    private readonly cassette?: Cassette,
   ) {
     if (endpoints.length === 0) throw new Error("[router] no providers configured");
   }
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
+    const replayed = this.cassette?.get(req);
+    if (replayed) {
+      this.logUsage(req, replayed);
+      return replayed;
+    }
     const res = await this.run((p) => p.chat(req));
+    this.cassette?.put(req, res);
     this.logUsage(req, res);
     return res;
   }
 
   async chatStream(req: ChatRequest, onDelta: OnDelta): Promise<ChatResponse> {
+    const replayed = this.cassette?.get(req);
+    if (replayed) {
+      onDelta(replayed.content); // replay still drives streaming consumers
+      this.logUsage(req, replayed);
+      return replayed;
+    }
     const res = await this.run((p) => p.chatStream(req, onDelta));
+    this.cassette?.put(req, res);
     this.logUsage(req, res);
     return res;
   }
