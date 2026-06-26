@@ -36,6 +36,7 @@ import { ToolRegistry } from "../tools/registry.js";
 import { Terminal } from "../tools/terminal.js";
 import { initToken } from "../transport/auth.js";
 import { registerUsage } from "../usage/rpc.js";
+import { BudgetWatcher } from "../usage/budget.js";
 import { UsageLog, readUsage } from "../usage/log.js";
 import { buildReport, renderReport } from "../usage/report.js";
 import { buildRegistry } from "../transport/all.js";
@@ -148,6 +149,10 @@ async function serve(): Promise<number> {
   triggers.start();
   startResourceGuard(gate); // throttle background work under CPU load
   attachNotificationSink(bus); // surface trigger notifications (Phase 14 swaps in an OS toast)
+  if (config.budgetUsd > 0) {
+    new BudgetWatcher(join(config.paths.workspaceDir, "usage.jsonl"), config.budgetUsd, bus).start();
+    process.stdout.write(`[budget] weekly alert at $${config.budgetUsd}\n`);
+  }
 
   // Phase 10: connectors — inbound triage + outbound send RPC, MCP servers, realtime SSE stream.
   const connectors = new Map<string, Connector>([["local", new LocalConnector()]]);

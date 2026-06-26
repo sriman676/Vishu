@@ -31,6 +31,8 @@ export interface VishuConfig {
   providers: Record<string, ProviderConfig>;
   /** role → named-provider assignment, e.g. `{ "builder": "fast", "judge": "smart" }`. */
   roles: Record<string, string>;
+  /** Weekly spend budget in USD; 0 disables budget alerts. */
+  budgetUsd: number;
 }
 
 const DEFAULT_MODEL: Record<ProviderType, string> = {
@@ -101,6 +103,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): VishuConfig {
     provider?: ProviderObject;
     providers?: Record<string, ProviderObject>;
     roles?: Record<string, string>;
+    budgetUsd?: number;
   } = {};
   try {
     file = JSON.parse(readFileSync(paths.configFile, "utf8")) as typeof file;
@@ -116,5 +119,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): VishuConfig {
   const providers: Record<string, ProviderConfig> = {};
   for (const [name, o] of Object.entries(file.providers ?? {})) providers[name] = providerFromObject(o);
 
-  return { paths, port, provider: resolveProvider(env, file), providers, roles: file.roles ?? {} };
+  const budgetUsd = env.VISHU_BUDGET_USD ? Number(env.VISHU_BUDGET_USD) : file.budgetUsd ?? 0;
+
+  return { paths, port, provider: resolveProvider(env, file), providers, roles: file.roles ?? {}, budgetUsd: budgetUsd > 0 ? budgetUsd : 0 };
 }
