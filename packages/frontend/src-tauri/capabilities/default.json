@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Core window + permission to spawn the vishu core process.",
+  "description": "Core window. The harness spawns the vishu core natively (std::process), no shell plugin.",
   "windows": ["main"],
-  "permissions": ["core:default", "shell:allow-spawn", "shell:allow-execute"]
+  "permissions": ["core:default"]
 }

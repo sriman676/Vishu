@@ -218,6 +218,13 @@ policy — can only narrow, never widen.**
 > - **Multi-model council** — ✅ DONE. `orchestration/council.ts`: ask N models the same prompt, a judge
 >   model picks the best (`council(members, prompt, { judge })`). Available as an optional deliberation
 >   strategy. ponytail: judge-pick, not weighted voting/debate rounds — add those if one pass underdecides.
+> - **Parallel execution / multitasking** — ✅ DONE. `util/parallel.ts` `parallelMap(items, fn, limit)` is
+>   the bounded-concurrency primitive for I/O-bound fan-out (no deps, no worker threads — the work waits on
+>   I/O). Council already races via `Promise.all`. `Coordinator.run(goal, { parallel: true, concurrency })`
+>   now opt-in **races all hypothesis branches concurrently** (first PASS by order wins); the default stays
+>   sequential (token-frugal early-exit + learning backprop). ponytail ceiling: parallel mode does NOT
+>   auto-merge the winner (concurrent git merges into one repo race) and drops cross-branch learning —
+>   auto-merging the parallel winner afterward is the named upgrade; use sequential when you need the merge.
 
 ### Phase 9 — Proactive automation
 `cron` 5s tick + **triggers** (on inbound message / file change / schedule) + saved **workflows**
@@ -386,6 +393,26 @@ RPC); branding + logo.
 > the Rust toolchain + a native build (the locked-decision "ask before build cost" trigger), and the web
 > app already satisfies the green-check (same contract as the CLI). Named seam: wrap this Vite app in Tauri
 > when a packaged desktop binary is wanted; it also absorbs the `desktop` module's keyboard/mouse/overlay.
+>
+> **Phase 14 — native harness DONE (Rust, compiles on Windows; `cargo 1.95`).** `packages/frontend/src-tauri/`
+> is now a real **harness layer between the user and the AI**, not a fire-and-forget webview:
+> - **Problems the old shell had (now solved):** (1) it spawned `vishu serve` and forgot it — no
+>   supervision; a core crash left the UI permanently dead. (2) The user had to **manually paste**
+>   `core.token` into the UI. (3) No process ownership — a closed window could orphan the core.
+> - **Design (`src/main.rs`, std::process + tauri only — dropped the `tauri-plugin-shell` dep + its
+>   `shell:*` capability):** a supervisor thread spawns the core, streams its stdout, parses the
+>   `[serve] … on http://…` (base URL) and `[serve] token: <path>` lines to build a `Session {base,
+>   token, ready}`, **restarts on crash** (capped 1→30s backoff), and **kills the core on
+>   `ExitRequested`** (no orphan). The webview calls the `harness_session` Tauri command and
+>   auto-connects — **no token paste** (`App.tsx` polls it when `window.__TAURI__` exists; the browser/PWA
+>   paste box is untouched). All memory/skills/prompts/loops stay in the TS core; the harness only owns
+>   lifecycle + input routing and drives the core over the existing `vishu.*` RPC.
+> - **`VISHU_BIN`/`VISHU_ARGS`** override the launcher/args (dev: `node dist/bin/vishu.js serve`).
+> - **ponytail ceiling (named upgrade):** dev-shell path uses `tauri dev` where the Vite proxy handles
+>   `/rpc`+`/events`, so no CORS work was needed. The **packaged binary's** webview→core call is
+>   cross-origin; solve it then with either core CORS or a harness-side HTTP/SSE proxy (the harness is
+>   already the middle layer). `bundle.active` stays `false` until that's wired. Native keyboard/mouse/
+>   overlay (the `desktop` module) also lands here next.
 
 ---
 
@@ -400,20 +427,125 @@ Taken whole this is large. The viral, demoable, star-worthy core is **Phases 0�
 token-frugal, provider-agnostic, reliable agent that builds software. Ship that first; everything
 else layers on once it's green.
 
-## Requested backlog (post-14, not yet built)
-User-requested features captured for a future session. Each sits on a frontier problem, so the
-design rule is **best-effort with a human gate**, never a claimed-solved autonomous loop.
-- **Multi-AI role registry.** When >1 AI/provider is connected, the user assigns each a role
-  (builder / summariser / messenger / …); a routing layer over the provider Router + orchestration
-  archetypes dispatches each task to its assigned AI. Pure-TS. (Frontier: async multi-agent coordination.)
-- **Backend error auto-fix loop.** While an AI is active, a background watcher tails build/logs for
-  errors and dispatches a **bounded** auto-fix turn (reuse Phase 4 self-verification + Phase 9 triggers).
-  (Frontier: long-horizon autonomous reliability — bounded budget + deterministic check as the gate.)
-- **Self-evolving project loop.** Periodic loop proposes improvements (tests, refactors) with a
-  **human-accept gate** — suggest, never auto-apply (extends Phase 13 twin). (Frontier: self-improvement
-  without drift; the vault is the immutable audit trail.)
-- **Backup API keys (labelled).** Mostly already done — the Phase 2 router rotates provider+key on
-  quota/limit. Remaining: expose primary/backup labels in config so failover order is explicit.
+## Requested backlog — ✅ ALL DONE
+User-requested features, all now built (each sits on a frontier problem, so the design rule held:
+**best-effort with a human gate**, never a claimed-solved autonomous loop).
+- **Multi-AI role registry.** ✅ DONE. `orchestration/roles.ts`: `RoleRegistry` maps a role
+  (builder / summariser / messenger / …) → a `Router`; `for(role)` dispatches to that role's AI, falling
+  back to a default when unassigned. Pure-TS, dep-free. ponytail: a Map + fallback over the existing
+  Router — building one named Router per connected AI from config is the named upgrade (the core builds a
+  single Router today). (Frontier: async multi-agent coordination.)
+- **Backend error auto-fix loop.** ✅ DONE. `automation/autofix.ts`: `autoFixPass` runs a validator
+  (build/tests/lint) and, **only at `automatic` autonomy**, dispatches a **bounded** `selfVerify` fix
+  loop (Phase 4); otherwise it **parks the failure for approval** (`onParked`). The deterministic
+  validator exit code is the gate, never an LLM verdict. The poke source (a Phase 9 file/cron trigger or
+  a manual call) is injected. (Frontier: long-horizon autonomous reliability — bounded budget +
+  deterministic check as the gate.)
+- **Self-evolving project loop.** ✅ DONE. `personalization/evolve.ts`: `ProjectEvolver` +
+  `analyzeProject` deterministically scan a project (oversized files, TODO/FIXME markers, no-tests) and
+  record **proposals** with stable sigs (re-scans never duplicate); `runEvolutionPass` notifies via a
+  `system/notification` event when new ones appear. Strict **human gate** — `accept`/`dismiss` only;
+  nothing is auto-applied, accept optionally saves the suggestion as a runnable Workflow, and the atomic
+  JSON store is the audit trail. ponytail: heuristic analyzer (no AST/LLM); codegraph/LLM proposals are
+  the named upgrade on the same propose/accept seam. Periodic wiring (cron/interval → `runEvolutionPass`)
+  is the named integration seam.
+- **Backup API keys (labelled).** ✅ DONE. The Phase 2 router rotates provider+key on quota/limit;
+  config now carries an explicit label per key (file config: `apiKeys: [{key,label}|"key"]`; env keys
+  default to `primary`/`backup1`/…), surfaced in the provider name so router failover logs name the
+  dropped key. Array order = failover order. (`config/config.ts`, `providers/factory.ts`.)
+
+## Shipped — Phase 15 (capability + autonomy build-out)
+Done this session — each its own commit, full core suite green (115/115), no push:
+- **Token report** — real per-call usage captured at the Router chokepoint (`usage/`), CLI `vishu report
+  [days]`, RPC `vishu.token_report`, dep-free React `Pie.tsx` + Tokens tab, static $ price table, waste
+  heuristics (context bloat / model overkill / repeat-dedup) with $ savings.
+- **Multi-provider config** — named AIs (`config.providers`) + `roles` map; `buildRoles` builds one Router
+  per AI into `RoleRegistry`; `orchestrate` dispatches the "builder" role (closes open problem #6).
+- **Budget alerts** — `budgetUsd` config + `BudgetWatcher` publishes a `system/notification` when weekly
+  spend first crosses budget (edge-triggered, rides the existing notify seam).
+- **Self-evolving loop** — `runEvolutionPass` on a daily (unref'd) cron in `serve` + `vishu.evolve_*` RPC.
+- **Parallel auto-merge** — parallel Coordinator merges the winner serially post-race + backpropagates
+  cross-branch learnings (closes the parallel half of open problem #2; `git worktree add` race remains).
+- **Agent task queue** — `AgentQueue` bounded-concurrency multitasking (`VISHU_AGENT_CONCURRENCY`) +
+  `vishu.agent_queue_*`; per-task Terminal so concurrent shells don't interleave.
+- **Digital-twin auto-record** — `twin.record` one-liner in `startTurn` + `vishu.twin_*` RPC.
+- **Core CORS** — allowlisted CORS + OPTIONS preflight on the transport server (in-code half of #1).
+- **Auto-fix loop** — `vishu.autofix` (shell validator + agent fix; deterministic exit code is the gate).
+
+## Next session — capability amplification ("use 100% of the model") + Set C standout
+Approved direction: **test-time compute / scaffolding** that extracts more capability from the *same*
+weights. (The "we only use 10–20%" papers really mean: a single-shot call leaves capability on the table;
+sampling, verification, ensembling, and reflection recover a lot of it.) Build one at a time, verified,
+commit per item. Highest-leverage order:
+
+**Capability amplifiers (pure-code over the existing Router / council / multi-provider — no new deps):**
+1. **Self-consistency + best-of-N** — sample N candidates (temperature spread), select by majority vote or
+   a verifier/judge model (reuse council's judge). The core test-time-compute lever. New `reasoning/`
+   module; expose as an agent tool + RPC. Tests: majority aggregation, verifier selection, N=1 degenerate.
+2. **Mixture-of-Agents** — layered ensemble: N proposers answer → an aggregator synthesizes → repeat L
+   layers. Uses multi-provider for a true multi-model ensemble; degrades to one Router. Extends `council.ts`.
+3. **Reflexion self-critique** — generate → model critiques its own answer → revise, bounded (extends
+   `selfVerify` from builds to any answer). Stop when the critique says "no change" or the budget hits.
+4. **Difficulty / effort router** — a cheap classifier (heuristic first; small-model upgrade later) picks
+   effort per query: trivial→single call, medium→self-consistency, hard→MoA/orchestration. The meta-controller
+   that spends compute where it pays and saves tokens elsewhere; reports chosen effort into the token report.
+
+**Set C — frontier mitigations that differentiate (bounded, honest ceilings, NOT "solved"):**
+5. **Deterministic record/replay** — record each Router call (prompt hash → response) to a cassette under
+   `workspaceDir`; a replay mode returns recorded responses (clean given the Router chokepoint + usage log).
+   Makes runs reproducible and tests hermetic — a real trust feature. Env/RPC toggle.
+6. **Cross-session identity profile** — a persistent per-user profile (prefs, recurring context) loaded into
+   the system prompt each session, updated from the twin + memory rollups. The "it actually knows me" feel.
+7. **Self-healing memory** — consolidation + eviction (bound unbounded growth) and contradiction/staleness
+   on recall (recency/decay weighting; flag conflicting notes on one subject). Extends `memory/rollup.ts`.
+8. **Long-horizon eval harness** — a task suite + scorer to measure multi-step / multi-agent quality over
+   time (largest, least user-visible — do last, or skip if budget is tight).
+
+**#9 stays advisory by design** — the deterministic scanner + optional Semgrep are the gates; gating on a
+non-deterministic LLM verdict can both block valid builds and pass bad ones.
+
+> Cost note: the Phase-15 build above ran the session to ~$125. Budget the amplifier work accordingly —
+> consider a cheaper model (`/model`) for the mechanical items and reserve the top model for the tricky ones.
+
+## Open problems — present and NOT yet solved
+Known ceilings/seams carried by the current green build (each has a named upgrade path in its phase):
+1. **Packaged desktop cross-origin.** ✅ *Phase 15: core CORS + preflight shipped.* Remaining: `bundle.active`
+   stays `false` until the Tauri build/signing toolchain is available to produce + verify a packaged binary.
+2. **Parallel Coordinator.** ✅ *Phase 15: winner auto-merged serially post-race + cross-branch learnings
+   backpropagated.* Remaining ceiling: high `concurrency` can still race on `git worktree add`.
+3. **Token usage uncaptured.** ✅ *RESOLVED Phase 15 — usage captured at the Router chokepoint (token report).*
+4. **No true PTY.** Phase 3 terminal is sentinel-framed exec, not a real node-pty TTY (blocked: node-gyp
+   needs Python, absent here).
+5. **No real channel clients.** Only `LocalConnector` + a generic `WebhookConnector`; Slack/Gmail/Telegram/
+   etc. need creds + their API client.
+6. **RoleRegistry has one Router.** ✅ *RESOLVED Phase 15 — `config.providers` + `roles` + `buildRoles` give
+   one named Router per AI; `orchestrate` dispatches the "builder" role.*
+7. **Wallet is offline-signing only.** No nonce/gas auto-fill, BTC PSBT/UTXO, or Solana tx build (need network RPC).
+8. **Voice is one-shot STT.** No TTS, streaming dictation, or live meeting agent.
+9. **LLM OWASP review is advisory** (by design — gating on a non-deterministic verdict is unsafe); the
+   deterministic scanner + optional Semgrep are the gates.
+10. **Frontier (documented, best-effort, not claimed solved):** memory staleness/contradiction, long-horizon
+    multi-agent eval, deterministic replay, cross-session identity, unbounded memory growth. → *Now planned
+    as Set C (items 5–8) in the Next-session section above: bounded mitigations, honest ceilings, not "solved".*
+
+## Missing features — should be added (backlog v2)
+Shipped Phase 15 (✅): **token/cost report** + **$ price table** + **budget alerts**; **auto-merge the
+parallel winner** + cross-branch learning; **multi-provider config**; **self-evolving cron** (heuristic
+analyzer — codegraph/LLM-proposed improvements remain the upgrade); **digital-twin auto-record**;
+**agent-level task queue**. (Details in the Phase-15 "Shipped" section above.)
+
+Still open:
+- **Capability amplifiers** — self-consistency/best-of-N, Mixture-of-Agents, Reflexion, difficulty/effort
+  router. *(Approved; planned as items 1–4 in the Next-session section.)*
+- **Set C frontier mitigations** — record/replay, cross-session identity, self-healing memory, eval harness.
+  *(Planned as items 5–8 in the Next-session section.)*
+- **Packaged desktop installer** (Tauri bundle); CORS is done, bundle/signing toolchain still needed. Absorb
+  the `desktop` module's keyboard/mouse/overlay into the harness.
+- **Real channel connectors** behind creds (Slack/Gmail/Telegram/Notion); inbound triage already exists.
+- **TTS + live voice/meeting agent** on the existing `callSidecar` seam.
+- **Wallet network-tx layer** (nonce/gas, PSBT/UTXO, Solana build + broadcast).
+- **Codegraph/LLM-proposed improvements** in the evolver (today's cron is heuristic-only).
+- **True PTY terminal** when Python/node-gyp is available (ANSI/curses).
 
 ## Brand
 `assets/logo.svg` — original mark: three branches from one root node (Arbor tree / multi-agent /

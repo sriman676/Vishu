@@ -18,7 +18,7 @@ It runs on Windows and is cross-platform. CLI-first, with a React/PWA frontend a
 
 ## Status
 
-**Phases 0–14 complete and green** (81 core tests passing; frontend builds clean). The single remaining item is packaging the native desktop binary (the Tauri shell compiles; `pnpm tauri:dev` runs it). See [`PLAN.md`](PLAN.md) for the full phase-by-phase record and the requested backlog.
+**Phases 0–14 complete and green** (92 core tests passing; frontend builds clean; Rust harness compiles). The whole requested backlog is built too. The native **harness** (Rust/Tauri) now supervises the core — spawns `vishu serve`, restarts it on crash, and hands the UI a ready bearer token so you never paste one (`pnpm tauri:dev`). The one named upgrade left is the *packaged* binary's cross-origin path (webview→core), which needs core CORS or a harness-side proxy. See [`PLAN.md`](PLAN.md) for the full phase-by-phase record.
 
 ## Quickstart
 
@@ -58,6 +58,8 @@ Secrets live in the OS keychain or env — **never** in the vault and never in t
 ## Optional modules (flag: `VISHU_MODULES`)
 
 Off by default; a failing module can never crash the core. `wallet` (EVM/Solana/BTC signing), `imagegen`, `voice` (whisper STT via a Python sidecar), `desktop` (cross-platform screen capture), plus `artifacts`, `pairing`, `selfupdate`.
+
+The Python sidecars (`voice` → whisper, optional Semgrep SAST) are the only non-Node deps and are optional — install them only if you use those features: `pip install -r requirements.txt`. Absent, each returns a clear error instead of crashing.
 
 ## Architecture
 

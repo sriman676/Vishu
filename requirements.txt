@@ -1,0 +1,9 @@
+# Vishu optional Python sidecars (packages/core/sidecar/*.py).
+# The core (TypeScript/Node) runs without these; each sidecar degrades to a clear
+# error when its dep is absent, never a crash. Install only the ones you need.
+
+# voice STT sidecar (Phase 12, flag `voice`) — whisper_stt.py
+openai-whisper>=20231117
+
+# SAST depth sidecar (Phase 11, optional/advisory) — semgrep_scan.py
+semgrep>=1.60.0

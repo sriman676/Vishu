@@ -1,6 +1,29 @@
+# Node / pnpm
 node_modules/
 dist/
+*.tsbuildinfo
+
+# Logs / scratch
 *.log
 *.err
 *.out
+*.tmp
+
+# Rust / Tauri build artifacts (large — never push)
+packages/frontend/src-tauri/target/
+
+# Python sidecars
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Secrets / local runtime state
+.env
+.env.*
+core.token
+.vishu/
+
+# OS
 .DS_Store
+Thumbs.db
