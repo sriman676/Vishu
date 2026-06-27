@@ -2,3 +2,6 @@ packages:
   - "packages/*"
 allowBuilds:
   esbuild: true
+# Force the transitive ws past the DoS advisory (GHSA-96hv-2xvq-fx4p); pulled in only via viem.
+overrides:
+  ws: ">=8.21.0"
