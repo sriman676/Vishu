@@ -42,6 +42,7 @@ import { renderEval } from "../eval/report.js";
 import { runEval } from "../eval/runner.js";
 import { makeRunners } from "../eval/runners.js";
 import { BUILTIN_SUITE } from "../eval/suite.js";
+import { loadSweBenchLite, runSweBench } from "../eval/swebench.js";
 import { buildPoolRouter, buildRouter } from "../providers/factory.js";
 import { RunLog } from "../reliability/runlog.js";
 import { makePolicy } from "../security/policy.js";
@@ -385,6 +386,59 @@ async function evalCmd(runnerName = "effort"): Promise<number> {
   return 0;
 }
 
+/** SWE-bench Lite: generate patches and write a predictions.jsonl the official harness scores. Vishu's
+ * half is patch generation; the FAIL_TO_PASS / Docker scoring delegates to `swebench` (printed at the end)
+ * — never reimplement the scorer, that's where homegrown harnesses produce bogus numbers.
+ *   vishu eval swebench [--limit N] [--file local.json] [--out preds.jsonl] */
+async function sweBenchCmd(args: string[]): Promise<number> {
+  const flag = (name: string) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const config = loadConfig();
+  const cacheDir = join(config.paths.workspaceDir, "swebench");
+  mkdirSync(cacheDir, { recursive: true });
+  const out = flag("--out") ?? join(cacheDir, "predictions.jsonl");
+  const limit = flag("--limit") ? Number(flag("--limit")) : undefined;
+  const model = config.provider.model;
+  const router = buildRouter(config.provider, usageLog(config));
+
+  const instances = await loadSweBenchLite({ file: flag("--file"), limit, cacheFile: join(cacheDir, "lite.json") });
+  process.stdout.write(`[swebench] ${instances.length} instances · model ${model} → ${out}\n`);
+
+  const runAgent = async (repoDir: string, problem: string): Promise<void> => {
+    const registry = registerBuiltins(new ToolRegistry());
+    const terminal = new Terminal(repoDir);
+    try {
+      await runToolLoop(
+        { router, registry, policy: makePolicy("full", repoDir), terminal, model },
+        [
+          { role: "system", content: "You are Vishu, a coding agent fixing a reported issue in an existing repository. Read the relevant code, then edit files in place to resolve the issue. Make the smallest change that fixes it; do not add dependencies or unrelated changes." },
+          { role: "user", content: problem },
+        ],
+      );
+    } finally {
+      terminal.close();
+    }
+  };
+
+  await runSweBench(instances, model, { runAgent, cacheDir }, {
+    outFile: out,
+    onProgress: (id, i, n) => process.stdout.write(`[swebench] ${i}/${n} ${id}\n`),
+  });
+
+  process.stdout.write(
+    `\n[swebench] wrote ${out}\n` +
+      "[swebench] score it with the official harness (needs Docker + Python):\n" +
+      "  pip install swebench\n" +
+      "  python -m swebench.harness.run_evaluation \\\n" +
+      "    --dataset_name princeton-nlp/SWE-bench_Lite \\\n" +
+      `    --predictions_path ${out} \\\n` +
+      "    --max_workers 4 --run_id vishu\n",
+  );
+  return 0;
+}
+
 async function rpc(method: string, paramsJson?: string): Promise<number> {
   const config = loadConfig();
   const token = readToken(config.paths.workspaceDir);
@@ -428,7 +482,7 @@ async function main(argv: string[]): Promise<number> {
     return build(text);
   }
   if (cmd === "report") return report(argv[1]);
-  if (cmd === "eval") return evalCmd(argv[1]);
+  if (cmd === "eval") return argv[1] === "swebench" ? sweBenchCmd(argv.slice(2)) : evalCmd(argv[1]);
   if (cmd === "rpc") {
     const method = argv[1];
     if (!method) return usageErr("vishu rpc <method> [jsonParams]");
@@ -448,6 +502,7 @@ async function main(argv: string[]): Promise<number> {
       "  vishu build <what>           guided secure app builder: spec interview → build → pentest",
       "  vishu report [days]          weekly token report: where tokens go + where they're wasted",
       "  vishu eval [runner]          run the eval suite (baseline|effort|moa) + track quality over time",
+      "  vishu eval swebench [--limit N] [--file f] [--out p]   SWE-bench Lite: write predictions.jsonl",
       "  vishu rpc <method> [json]    call a method on a running core",
       "",
     ].join("\n"),
