@@ -57,6 +57,12 @@ const PRESETS: Record<string, { type: ProviderType; baseUrl: string; model: stri
   groq: { type: "openai", baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
   deepseek: { type: "openai", baseUrl: "https://api.deepseek.com", model: "deepseek-chat" },
   nvidia: { type: "openai", baseUrl: "https://integrate.api.nvidia.com/v1", model: "meta/llama-3.1-8b-instruct" },
+  mistral: { type: "openai", baseUrl: "https://api.mistral.ai/v1", model: "mistral-small-latest" },
+  together: { type: "openai", baseUrl: "https://api.together.xyz/v1", model: "meta-llama/Llama-3.3-70B-Instruct-Turbo" },
+  fireworks: { type: "openai", baseUrl: "https://api.fireworks.ai/inference/v1", model: "accounts/fireworks/models/llama-v3p1-8b-instruct" },
+  xai: { type: "openai", baseUrl: "https://api.x.ai/v1", model: "grok-2-latest" },
+  perplexity: { type: "openai", baseUrl: "https://api.perplexity.ai", model: "sonar" },
+  cohere: { type: "openai", baseUrl: "https://api.cohere.ai/compatibility/v1", model: "command-r" },
 };
 
 /** Identify a provider from an API key's prefix — lets auto-detect recognise a key pasted straight into
@@ -67,6 +73,9 @@ function detectFromKey(key: string): string | undefined {
   if (key.startsWith("sk-or-")) return "openrouter";
   if (key.startsWith("gsk_")) return "groq";
   if (key.startsWith("AIza")) return "gemini";
+  if (key.startsWith("fw_")) return "fireworks";
+  if (key.startsWith("xai-")) return "xai";
+  if (key.startsWith("pplx-")) return "perplexity";
   if (key.startsWith("sk-")) return "openai";
   return undefined;
 }
@@ -82,6 +91,12 @@ const ENV_KEYS: { provider: string; env: string }[] = [
   { provider: "groq", env: "GROQ_API_KEY" },
   { provider: "deepseek", env: "DEEPSEEK_API_KEY" },
   { provider: "nvidia", env: "NVIDIA_API_KEY" },
+  { provider: "mistral", env: "MISTRAL_API_KEY" },
+  { provider: "together", env: "TOGETHER_API_KEY" },
+  { provider: "fireworks", env: "FIREWORKS_API_KEY" },
+  { provider: "xai", env: "XAI_API_KEY" },
+  { provider: "perplexity", env: "PERPLEXITY_API_KEY" },
+  { provider: "cohere", env: "COHERE_API_KEY" },
 ];
 
 /** CSV or single value → trimmed list. Comma-separated = N keys for failover. */

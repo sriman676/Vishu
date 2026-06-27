@@ -41,7 +41,7 @@ import { renderEval } from "../eval/report.js";
 import { runEval } from "../eval/runner.js";
 import { makeRunners } from "../eval/runners.js";
 import { BUILTIN_SUITE } from "../eval/suite.js";
-import { buildRouter } from "../providers/factory.js";
+import { buildPoolRouter, buildRouter } from "../providers/factory.js";
 import { RunLog } from "../reliability/runlog.js";
 import { makePolicy } from "../security/policy.js";
 import { SkillIndex } from "../skills/index.js";
@@ -131,7 +131,11 @@ async function serve(): Promise<number> {
   const replayMode = (process.env.VISHU_REPLAY as ReplayMode) || "off";
   const cassette = new Cassette(join(config.paths.workspaceDir, "cassette.json"), replayMode);
   if (replayMode !== "off") process.stdout.write(`[replay] ${replayMode} → ${join(config.paths.workspaceDir, "cassette.json")}\n`);
-  const router = buildRouter(config.provider, usage, cassette);
+  // Multi-provider pool: when named providers are configured, span them all in one Router (each bound to
+  // its own model). VISHU_KEY_MODE decides parallel (balance) vs one-after-other (failover).
+  const pooled = Object.keys(config.providers).length > 0;
+  const router = pooled ? buildPoolRouter(config.providers, usage, cassette) : buildRouter(config.provider, usage, cassette);
+  if (pooled) process.stdout.write(`[pool] ${Object.keys(config.providers).join(" + ")} (mode: ${process.env.VISHU_KEY_MODE || "failover"})\n`);
   const roles = buildRoles(router, config.providers, config.roles, usage);
   if (roles.roles().length) process.stdout.write(`[roles] ${roles.roles().map((r) => `${r}→${config.roles[r]}`).join(", ")}\n`);
   const memory = new MemoryStore(

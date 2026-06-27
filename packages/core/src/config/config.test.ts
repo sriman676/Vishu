@@ -96,3 +96,10 @@ test("auto-detect from key prefix: nvapi- → NVIDIA NIM, sk-ant- → anthropic"
   assert.equal(mixed.provider.baseUrl, "https://integrate.api.nvidia.com/v1");
   assert.deepEqual(mixed.provider.apiKeys, ["nvapi-abc"]);
 });
+
+test("extended providers: prefix + preset for xai, fireworks, perplexity, and env-named mistral", () => {
+  assert.equal(loadConfig({ VISHU_API_KEY: "xai-abc" } as NodeJS.ProcessEnv).provider.baseUrl, "https://api.x.ai/v1");
+  assert.equal(loadConfig({ VISHU_API_KEY: "fw_abc" } as NodeJS.ProcessEnv).provider.baseUrl, "https://api.fireworks.ai/inference/v1");
+  assert.equal(loadConfig({ VISHU_API_KEY: "pplx-abc" } as NodeJS.ProcessEnv).provider.model, "sonar");
+  assert.equal(loadConfig({ MISTRAL_API_KEY: "abc" } as NodeJS.ProcessEnv).provider.baseUrl, "https://api.mistral.ai/v1");
+});

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { buildPoolRouter } from "./factory.js";
 import { ScriptedProvider } from "./mock.js";
 import { Router } from "./router.js";
 import { type Provider, ProviderError } from "./types.js";
@@ -42,4 +43,11 @@ test("local mode routes only to local endpoints when present", async () => {
 test("local mode falls back to all endpoints when none are local", async () => {
   const r = new Router([named("a"), named("b")], undefined, undefined, "local");
   assert.equal((await r.chat(req)).content, "a"); // no local → uses the full ring
+});
+
+test("buildPoolRouter spans multiple named providers and round-trips; empty throws", async () => {
+  const mockCfg = { type: "mock" as const, model: "mock", baseUrl: "", apiKeys: [], keyLabels: [] };
+  const pool = buildPoolRouter({ a: mockCfg, b: mockCfg });
+  assert.match((await pool.chat(req)).content, /hi/); // echoes through a pooled endpoint
+  assert.throws(() => buildPoolRouter({}), /no providers/);
 });
