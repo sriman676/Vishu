@@ -361,7 +361,9 @@ async function evalCmd(runnerName = "effort"): Promise<number> {
   const runners = makeRunners(router, config.provider.model);
   const runner = runners[runnerName];
   if (!runner) return usageErr(`vishu eval [${Object.keys(runners).join("|")}]`);
-  const report = await runEval(BUILTIN_SUITE, runner, { runnerName });
+  // VISHU_EVAL_CONCURRENCY=1 runs tasks sequentially — gentler on a single key's rate limit (MoA fans out).
+  const concurrency = Number(process.env.VISHU_EVAL_CONCURRENCY) || undefined;
+  const report = await runEval(BUILTIN_SUITE, runner, { runnerName, concurrency });
   const history = new EvalHistory(join(config.paths.workspaceDir, "eval-history.jsonl"));
   history.record(report);
   process.stdout.write(`${renderEval(report, history.trend(runnerName))}\n`);

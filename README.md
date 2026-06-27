@@ -78,15 +78,15 @@ It also reads standard env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_
 
 ## Benchmarks
 
-The built-in eval suite, scored on **NVIDIA NIM `llama-3.1-8b-instruct`**:
+The built-in 8-task suite (4 easy + 4 hard), scored on **NVIDIA NIM `llama-3.1-8b-instruct`**:
 
-| Runner | Pass rate |
-|---|---|
-| `baseline` (single call) | 100% |
-| `effort` (difficulty-routed amplification) | 100% |
-| `moa` (multi-agent ensemble) | 75% |
+| Runner | Pass rate | |
+|---|---|---|
+| `baseline` (single call) | 63% (5/8) | fails CRT bat-and-ball, two-leg distance, letter-count |
+| `effort` (difficulty-routed) | 63% (5/8) | best-of-N ties baseline on this model |
+| `moa` (multi-agent ensemble) | **75% (6/8)** | **recovers two hard tasks single-shot misses** |
 
-Honest read: the starter suite is trivial enough that the base model already maxes it single-shot, so it can't yet demonstrate the amplifiers' edge — and on easy tasks an ensemble can even regress (MoA's aggregator changed a correct answer). The amplifiers pay off where single-shot *fails*; a harder suite is the named next step. Run your own with `pnpm vishu eval <runner>` — it records history and reports the trend.
+Honest read: the hard tier makes the suite discriminate. **MoA wins** — its multi-perspective layers crack the CRT bat-and-ball and the letter-count that single-shot and best-of-N both miss. Two real lessons fall out: self-consistency (`effort`/best-of-N) fixes *variance*, not *bias* — it can't help when the model is reliably wrong, so it ties baseline here; and a small model used as the MoA aggregator still occasionally fumbles a trivial task (assign a stronger model to the judge role to close that). Run your own with `pnpm vishu eval <runner>` (use `VISHU_EVAL_CONCURRENCY=1` on a single rate-limited key); it records history and reports the trend.
 
 ## Configuration
 
