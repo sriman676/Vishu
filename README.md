@@ -43,22 +43,32 @@ pnpm vishu serve                              # JSON-RPC core (loopback)
 
 Drop a key into `.env` and leave `VISHU_PROVIDER` unset. Vishu identifies the provider from the key's prefix:
 
-| Key prefix | Provider | | Or set `VISHU_PROVIDER=` |
+| Key prefix | Provider | | Presets (`VISHU_PROVIDER=`) |
 |---|---|---|---|
-| `sk-ant-…` | Anthropic | | `gemini`, `openrouter`, `groq`, `deepseek`, `nvidia` |
-| `nvapi-…` | NVIDIA NIM | | (presets auto-wire the endpoint + a default model) |
-| `AIza…` | Google Gemini | | |
+| `sk-ant-…` | Anthropic | | `gemini`, `openrouter`, `groq`, `deepseek`, |
+| `nvapi-…` | NVIDIA NIM | | `nvidia`, `mistral`, `together`, `fireworks`, |
+| `AIza…` | Google Gemini | | `xai`, `perplexity`, `cohere` |
 | `gsk_…` | Groq | | |
-| `sk-or-…` | OpenRouter | | |
-| `sk-…` | OpenAI | | |
+| `sk-or-…` `fw_…` `xai-…` `pplx-…` | OpenRouter / Fireworks / xAI / Perplexity | | (presets auto-wire endpoint + a default model — |
+| `sk-…` | OpenAI | | override with `VISHU_MODEL`) |
 
-It also reads standard env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …). Any key var accepts a **comma-separated list** for failover.
+It also reads standard env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY`, …). Any key var accepts a **comma-separated list** for failover.
 
-### Multi-key routing (`VISHU_KEY_MODE`)
+### Multi-key & multi-provider routing (`VISHU_KEY_MODE`)
 
-- `failover` (default) — try one key, rotate to the next only on error.
+- `failover` (default) — try one, rotate to the next only on error.
 - `balance` — round-robin every call across all keys, so concurrent amplifier/ensemble calls spread out instead of hitting one key's 429.
-- `local` — route only to a local LLM when present. Fold a local model into the ring with `VISHU_LOCAL_BASE_URL=http://127.0.0.1:11434`.
+- `local` — route only to a local LLM when present. Fold one into the ring with `VISHU_LOCAL_BASE_URL=http://127.0.0.1:11434`.
+
+**Pool different providers in parallel** (e.g. Anthropic + OpenAI + local Ollama at once): declare them in the config file (`~/.vishu/config.json` or `$VISHU_CONFIG`) — each carries its own model — then pick parallel vs sequential with `VISHU_KEY_MODE`:
+
+```json
+{ "providers": {
+    "claude":  { "type": "anthropic", "apiKeys": ["sk-ant-…"], "model": "claude-opus-4-…" },
+    "gpt":     { "type": "openai",    "apiKeys": ["sk-…"],     "model": "gpt-4o" },
+    "local":   { "type": "ollama",    "baseUrl": "http://127.0.0.1:11434", "model": "llama3.2" }
+} }
+```
 
 ## What's inside
 
@@ -74,7 +84,7 @@ It also reads standard env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_
 | **TokenJuice** | HTML→Markdown, dedup, transcript compaction, active context curation, RTK-style per-command shell-output compression. |
 | **Connectors / MCP** | stdio MCP client (tools/resources/prompts + reconnect + sampling), inbound triage, outbound `Connector` seam, realtime SSE. |
 | **Optional modules** | Off by default behind `VISHU_MODULES`: `wallet` (EVM/Solana/BTC signing), `imagegen`, `voice` (whisper sidecar), `desktop`, `report` (research docs), `artifacts`, `pairing`, `selfupdate`. A throwing module can't crash the core. |
-| **Frontend** | React/Vite + PWA over the `vishu.*` contract; Rust/Tauri harness supervises the core and hands the UI a ready token. |
+| **Frontend** | React/Vite + PWA over the `vishu.*` contract: chat, a **notifications** panel (budget/trigger/triage alerts, unread badge), **eval** + **token** dashboards, a **memory/vault browser**, and a **settings** panel showing the active provider/model/key-mode/pool with a model switcher. Rust/Tauri harness supervises the core and hands the UI a ready token. |
 
 ## Benchmarks
 
