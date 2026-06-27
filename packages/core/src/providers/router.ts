@@ -11,13 +11,31 @@ const estimate = (text: string): number => Math.ceil(text.length / 4);
  * so iterating endpoints rotates both provider and key. Every model call funnels through here, so
  * it is also where token usage is captured (optional UsageLog) for the weekly token report.
  */
+/** How the Router spreads calls over its endpoints (one endpoint = one provider+key):
+ *  - failover: always try [0], rotate to the next only on a transient error (default).
+ *  - balance:  round-robin the start across all endpoints so concurrent calls spread over keys.
+ *  - local:    round-robin over local endpoints only (cloud keys idle); falls back to all if none local. */
+export type KeyMode = "failover" | "balance" | "local";
+
 export class Router {
+  private rr = 0; // round-robin cursor for balance/local modes
+
   constructor(
     private readonly endpoints: Provider[],
     private readonly usageLog?: UsageLog,
     private readonly cassette?: Cassette,
+    private readonly mode: KeyMode = "failover",
   ) {
     if (endpoints.length === 0) throw new Error("[router] no providers configured");
+  }
+
+  /** The endpoint try-order for one call. failover keeps [0..]; balance/local rotate the start so
+   * concurrent calls land on different keys, then still fail over through the rest of the ring. */
+  private order(): Provider[] {
+    if (this.mode === "failover") return this.endpoints;
+    const pool = this.mode === "local" && this.endpoints.some((e) => e.local) ? this.endpoints.filter((e) => e.local) : this.endpoints;
+    const start = this.rr++ % pool.length;
+    return [...pool.slice(start), ...pool.slice(0, start)];
   }
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
@@ -79,7 +97,7 @@ export class Router {
 
   private async run<T>(call: (p: Provider) => Promise<T>): Promise<T> {
     let lastErr: unknown;
-    for (const ep of this.endpoints) {
+    for (const ep of this.order()) {
       try {
         return await call(ep);
       } catch (e) {

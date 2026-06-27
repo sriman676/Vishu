@@ -43,6 +43,8 @@ export type OnDelta = (text: string) => void;
 /** Same trait for cloud + local backends so the harness stays backend-agnostic (doc 08). */
 export interface Provider {
   readonly name: string;
+  /** True for on-device backends (ollama). The Router's "local" key-mode routes only to these. */
+  readonly local?: boolean;
   chat(req: ChatRequest): Promise<ChatResponse>;
   /** Stream sinks surface partial output incrementally; returns the assembled final response. */
   chatStream(req: ChatRequest, onDelta: OnDelta): Promise<ChatResponse>;

@@ -9,6 +9,7 @@ export interface OllamaConfig {
 /** Local Ollama adapter. ponytail: emit-once stream; NDJSON streaming is the upgrade path. */
 export class OllamaProvider implements Provider {
   readonly name: string;
+  readonly local = true; // on-device — eligible for the Router's "local" key-mode
   constructor(private readonly cfg: OllamaConfig) {
     this.name = cfg.name ?? "ollama";
   }
