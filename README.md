@@ -1,110 +1,125 @@
 <div align="center">
-  <img src="assets/logo.svg" width="88" height="88" alt="Vishu logo" />
+  <img src="assets/logo.svg" width="96" height="96" alt="Vishu logo" />
   <h1>Vishu</h1>
-  <p><strong>The local-first coding agent that never hits a rate limit and verifies the software it builds.</strong></p>
+  <p><strong>A local-first AI coding agent that never hits a rate limit, verifies the software it builds, and keeps your memory in plaintext you own.</strong></p>
+  <p>
+    <img alt="tests" src="https://img.shields.io/badge/tests-149%20passing-brightgreen">
+    <img alt="node" src="https://img.shields.io/badge/node-%E2%89%A524-blue">
+    <img alt="license" src="https://img.shields.io/badge/license-MIT-green">
+  </p>
 </div>
 
 ---
 
 ## What is Vishu?
 
-Vishu is a provider-agnostic, local-first AI agent that builds software. Reach for it when you want:
+Vishu is a provider-agnostic, local-first agent that builds software. Reach for it when you want:
 
-- **Memory you own** — a plaintext, Obsidian-editable markdown vault is the source of truth; the SQLite vector/FTS index is derived and rebuildable. Your knowledge never gets locked inside a proprietary store.
-- **No rate-limit walls** — one provider interface (OpenAI-compatible, Anthropic, Ollama) with a router that rotates provider **and** key on quota/limit/5xx errors. Add backup keys and it fails over automatically.
-- **Software it actually verifies** — the flagship `vishu build` runs a spec interview → your approval → a chunked multi-agent build on the Arbor hypothesis-tree engine → a deterministic security scan (OWASP Top-10, planted-vuln catch) → a maintainability gate. Security is gated on a deterministic scanner, never on an LLM's own verdict.
+- **Memory you own.** A plaintext, Obsidian-editable markdown vault is the source of truth; the SQLite vector/FTS index is derived and rebuildable. Edit a note in Obsidian, delete the index — your knowledge never gets locked in a proprietary store.
+- **No rate-limit walls.** One provider interface (OpenAI-compatible, Anthropic, Ollama) with a router that **fails over** on quota/limit/5xx **or load-balances across keys in parallel** — add backup keys and concurrent work spreads across them instead of hammering one.
+- **Software it actually verifies.** `vishu build` runs a spec interview → your approval → a chunked multi-agent build on the Arbor hypothesis-tree engine → a **deterministic** security scan (OWASP Top-10, planted-vuln catch) → a maintainability gate. Security gates on a deterministic scanner, never on an LLM's own verdict.
+- **More answer per token.** Test-time-compute amplifiers (self-consistency, Mixture-of-Agents, Reflexion, a difficulty router) plus RTK-style shell-output compression that squeezes noisy command output before it ever reaches the model.
 
-It runs on Windows and is cross-platform. CLI-first, with a React/PWA frontend and a Tauri desktop shell — all speaking the same `vishu.*` JSON-RPC contract.
-
-## Status
-
-**Phases 0–14 complete and green, plus the full capability build-out** (**142 core tests passing**; frontend builds clean; Rust harness compiles). On top of the core: the four **capability amplifiers** (self-consistency/best-of-N, Mixture-of-Agents, Reflexion, and a difficulty/effort router — `vishu.reasoning_*`), the **Set C frontier mitigations** (deterministic record/replay, cross-session identity profile, self-healing memory, and a long-horizon **eval harness** — `vishu eval`), **RTK-style shell-output compression** (squeezes noisy command output before it reaches the model), and a flag-gated **report-doc** module. The native **harness** (Rust/Tauri) supervises the core — spawns `vishu serve`, restarts it on crash, and hands the UI a ready bearer token so you never paste one (`pnpm tauri:dev`). The one named upgrade left is the *packaged* binary's cross-origin path (webview→core). See [`PLAN.md`](PLAN.md) for the full phase-by-phase record.
+CLI-first, cross-platform (built and tested on Windows), with a React/PWA frontend and a Rust/Tauri desktop harness — all speaking the same `vishu.*` JSON-RPC contract.
 
 ## Quickstart
 
 ```bash
 pnpm install              # Node 24+, pnpm workspace
-pnpm -r build             # build all packages
+pnpm -r build
 
-# point Vishu at a real provider (otherwise it runs an offline mock that just echoes)
-export VISHU_PROVIDER=openai          # openai (OpenAI-compatible: OpenRouter/NIM/local/…), anthropic, ollama
-export VISHU_API_KEY=sk-...           # or VISHU_API_KEYS=key1,key2 for auto-failover
-export VISHU_MODEL=gpt-4o-mini        # optional; sensible default per provider
+cp .env.example .env      # then paste your key into VISHU_API_KEY (see below)
 
-# run the core (loopback JSON-RPC, prints its bearer token path)
-pnpm vishu serve
-
-# one-shot chat / autonomous tool loop / guided secure build
 pnpm vishu chat "explain this repo"
-pnpm vishu agent "add a /health endpoint and test it"
-pnpm vishu build "a todo app with auth"
-
-# measure quality: baseline vs amplified vs multi-agent ensemble, tracked over time
-pnpm vishu eval effort
-
-# frontend (web): start the core, then
-pnpm dev:app              # Vite dev server on :5800, paste the printed core.token
-# desktop shell (native): from packages/frontend
-pnpm tauri:dev
+pnpm vishu agent "add a /health endpoint and a test for it"
+pnpm vishu build "a todo app with auth"      # guided secure build
+pnpm vishu eval effort                        # measure quality vs baseline
+pnpm vishu serve                              # JSON-RPC core (loopback)
 ```
 
 > On Windows PowerShell, set env vars with `$env:VISHU_PROVIDER="openai"` instead of `export`.
 
-## Configuration (env)
+### Just paste a key — the provider is auto-detected
 
-All config is file + `VISHU_*` env. The common ones:
+Drop a key into `.env` and leave `VISHU_PROVIDER` unset. Vishu identifies the provider from the key's prefix:
+
+| Key prefix | Provider | | Or set `VISHU_PROVIDER=` |
+|---|---|---|---|
+| `sk-ant-…` | Anthropic | | `gemini`, `openrouter`, `groq`, `deepseek`, `nvidia` |
+| `nvapi-…` | NVIDIA NIM | | (presets auto-wire the endpoint + a default model) |
+| `AIza…` | Google Gemini | | |
+| `gsk_…` | Groq | | |
+| `sk-or-…` | OpenRouter | | |
+| `sk-…` | OpenAI | | |
+
+It also reads standard env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …). Any key var accepts a **comma-separated list** for failover.
+
+### Multi-key routing (`VISHU_KEY_MODE`)
+
+- `failover` (default) — try one key, rotate to the next only on error.
+- `balance` — round-robin every call across all keys, so concurrent amplifier/ensemble calls spread out instead of hitting one key's 429.
+- `local` — route only to a local LLM when present. Fold a local model into the ring with `VISHU_LOCAL_BASE_URL=http://127.0.0.1:11434`.
+
+## What's inside
+
+| Area | What it does |
+|---|---|
+| **Agent + tools** | `read/write/list`, `run_shell`, `web_fetch/search`, persistent terminal, code-graph retrieval — all behind a `SecurityPolicy` (tiers, command classification, path jail, prompt-injection guard, sandbox backends). |
+| **Reliability** | Self-verification loop, git-worktree checkpoints/undo, risk-scoped approvals + autonomy levels, run log, cost meter + budget cap. |
+| **Memory** | Obsidian-editable vault (entities/tasks/people as `[[wikilinked]]` notes) + derived SQLite FTS/vector recall, smart-walk over links, staleness/contradiction handling, self-healing eviction. |
+| **Orchestration** | Arbor engine — Coordinator/Executor, hypothesis tree (branch/prune/harvest), subagents in isolated git worktrees that inherit-and-narrow the parent policy. |
+| **Reasoning amplifiers** | `solve` (difficulty-routed), best-of-N self-consistency, Mixture-of-Agents, Reflexion — `vishu.reasoning_*`. |
+| **Eval harness** | `vishu eval [baseline\|effort\|moa]` — scores runners on a task suite and tracks the trend over time. |
+| **Secure app builder** | `vishu build` — spec interview → verify → chunked Arbor build → deterministic OWASP scan + bounded remediation → maintainability gate. |
+| **TokenJuice** | HTML→Markdown, dedup, transcript compaction, active context curation, RTK-style per-command shell-output compression. |
+| **Connectors / MCP** | stdio MCP client (tools/resources/prompts + reconnect + sampling), inbound triage, outbound `Connector` seam, realtime SSE. |
+| **Optional modules** | Off by default behind `VISHU_MODULES`: `wallet` (EVM/Solana/BTC signing), `imagegen`, `voice` (whisper sidecar), `desktop`, `report` (research docs), `artifacts`, `pairing`, `selfupdate`. A throwing module can't crash the core. |
+| **Frontend** | React/Vite + PWA over the `vishu.*` contract; Rust/Tauri harness supervises the core and hands the UI a ready token. |
+
+## Benchmarks
+
+The built-in eval suite, scored on **NVIDIA NIM `llama-3.1-8b-instruct`**:
+
+| Runner | Pass rate |
+|---|---|
+| `baseline` (single call) | 100% |
+| `effort` (difficulty-routed amplification) | 100% |
+| `moa` (multi-agent ensemble) | 75% |
+
+Honest read: the starter suite is trivial enough that the base model already maxes it single-shot, so it can't yet demonstrate the amplifiers' edge — and on easy tasks an ensemble can even regress (MoA's aggregator changed a correct answer). The amplifiers pay off where single-shot *fails*; a harder suite is the named next step. Run your own with `pnpm vishu eval <runner>` — it records history and reports the trend.
+
+## Configuration
+
+All config is file + `VISHU_*` env (see `.env.example`). Common vars:
 
 | Var | Purpose |
 |---|---|
-| `VISHU_PROVIDER` | `openai` (OpenAI-compatible), `anthropic`, `ollama`, or `mock` (default — offline echo) |
-| `VISHU_API_KEY` / `VISHU_API_KEYS` | provider key; comma-separated list rotates on quota/limit/5xx |
-| `VISHU_MODEL` / `VISHU_BASE_URL` | override model + endpoint (sensible defaults per provider) |
-| `VISHU_PORT` / `VISHU_CORE_HOST` | core bind (default `127.0.0.1:5712`) |
-| `VISHU_MODULES` | comma-list of optional modules to enable (off by default) |
-| `VISHU_WEBHOOKS` | `{"channel":"https://hook"}` outbound webhook connectors |
-| `VISHU_MCP_SERVERS` | `[{"id","cmd","args"}]` external MCP tool servers |
-| `VISHU_WALLET_KEYSTORE` + `VISHU_WALLET_PASSPHRASE` | encrypted EVM signing key (or `VISHU_WALLET_KEY` for dev) |
-| `VISHU_IMAGE_API_KEY` | image-gen module (OpenAI-compatible) |
+| `VISHU_PROVIDER` | `openai` / `anthropic` / `ollama` / `mock`, or a preset (`gemini`/`groq`/`nvidia`/…). Auto-detected from the key if unset. |
+| `VISHU_API_KEY` / `VISHU_API_KEYS` | provider key; comma-separated list rotates/balances. |
+| `VISHU_KEY_MODE` | `failover` (default) / `balance` / `local`. |
+| `VISHU_MODEL` / `VISHU_BASE_URL` | override model + endpoint. |
+| `VISHU_MODULES` | comma-list of optional modules to enable. |
+| `VISHU_PORT` / `VISHU_CORE_HOST` | core bind (default `127.0.0.1:5712`). |
 
-Secrets live in the OS keychain or env — **never** in the vault and never in the model context.
+Secrets live in env or the OS keychain — **never** in the vault, never in the model context.
 
-## Optional modules (flag: `VISHU_MODULES`)
+## Security posture
 
-Off by default; a failing module can never crash the core. `wallet` (EVM/Solana/BTC signing), `imagegen`, `voice` (whisper STT via a Python sidecar), `desktop` (cross-platform screen capture), plus `artifacts`, `pairing`, `selfupdate`.
-
-The Python sidecars (`voice` → whisper, optional Semgrep SAST) are the only non-Node deps and are optional — install them only if you use those features: `pip install -r requirements.txt`. Absent, each returns a clear error instead of crashing.
+`pnpm audit`: 0 known vulnerabilities. No secrets in source or git history; `.env` is gitignored. SQL is fully parameterized; the frontend has no XSS sink. The transport is loopback-bound with a per-launch bearer token + CORS allowlist. The agent's shell/file execution is gated by `SecurityPolicy` (tiers + command classification + path jail) and a prompt-injection guard; `workspace_dir` is never agent-writable. The wallet keystore is scrypt→AES-256-GCM with keys loaded-then-discarded. *(AI-assisted audit — not a substitute for a professional pentest.)*
 
 ## Architecture
 
 ```
-vishu/  (pnpm monorepo)
-├── assets/logo.svg
-├── packages/core/        # TypeScript spine: transport, providers, agent, tools,
-│   ├── src/              #   reliability, tokenjuice, skills, memory, orchestration,
-│   └── sidecar/          #   automation, connectors, appbuilder, modules, personalization
-└── packages/frontend/    # React + Vite app (PWA) + src-tauri/ desktop shell
+vishu/
+├── packages/core/src/
+│   ├── transport/  providers/  security/  tools/  reliability/
+│   ├── tokenjuice/  skills/  memory/  orchestration/  reasoning/
+│   ├── automation/  connectors/  appbuilder/  modules/  eval/  replay/
+│   └── bin/vishu.ts        # CLI: serve | chat | agent | build | eval | report
+└── packages/frontend/      # React/Vite + Tauri harness
 ```
 
-The core is TypeScript/Node 24+ (CLI, RPC, agent loop). Best-language-per-job at the edges: Python sidecars (whisper STT, Semgrep SAST) over stdio JSON; Rust (Tauri) for the desktop host. Everything talks to the core over the `vishu.*` JSON-RPC contract.
-
-## Frontier problems (addressed best-effort, not claimed solved)
-
-Async multi-agent coordination, long-horizon autonomous reliability, continual self-improvement without drift, memory staleness/contradiction, unbounded memory growth, deterministic replay. Vishu's stance is **best-effort with a human gate** — deterministic checks gate security, the digital-twin suggests but never auto-applies, the vault is an immutable audit trail. None are claimed solved.
-
----
-
-## Brand & logo brief
-
-For regenerating, rasterizing, or iterating the mark (hand this section to a design tool or another Claude):
-
-- **Concept:** three branches rising from a single root node — a "V/Y" monogram that encodes Vishu's identity: the **Arbor hypothesis-tree** (orchestration), **multi-agent branches**, and the **knowledge-graph vault** (memory).
-- **Canvas:** 64×64 viewBox, rounded square (corner radius 15), background `#0e1116`.
-- **Strokes:** three lines from the root `(32,47)` to leaf nodes at `(18,18)`, `(46,18)`, `(32,15)`. Width ~4.5, round caps.
-- **Color:** vertical mint→teal gradient, `#7ef0bd` (top) → `#3fbf8c` (bottom).
-- **Nodes:** filled leaf circles (r≈4–4.5) at the three tips; a hollow root node at `(32,47)` (r≈5.5, dark fill, green ring).
-- **Feel:** simple, elegant, geometric. No gloss, no 3D, no text inside the mark.
-
-Original mark designed for this project (global uniqueness is not legally guaranteed without a trademark search).
+The core is TypeScript/Node 24. Python (whisper sidecar) and Rust (Tauri harness) sit at subsystem boundaries over stdio/RPC — the right language per job, not TS-only.
 
 ## License
 
