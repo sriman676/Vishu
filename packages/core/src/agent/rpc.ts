@@ -6,9 +6,9 @@ import type { AgentService } from "./service.js";
  * here we surface start_turn + transcript + sessions, the round-trip a frontend needs. */
 export function registerAgent(registry: Registry, service: AgentService): void {
   registry.register("vishu.agent_start_turn", async (params) => {
-    const p = (params ?? {}) as { sessionId?: string; message?: string };
+    const p = (params ?? {}) as { sessionId?: string; message?: string; model?: string };
     if (!p.message) return err("invalid_params", "message is required");
-    return ok(await service.startTurn(p.sessionId, p.message));
+    return ok(await service.startTurn(p.sessionId, p.message, p.model));
   });
 
   registry.register("vishu.agent_transcript", (params) => {

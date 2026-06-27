@@ -65,6 +65,11 @@ const PRESETS: Record<string, { type: ProviderType; baseUrl: string; model: stri
   cohere: { type: "openai", baseUrl: "https://api.cohere.ai/compatibility/v1", model: "command-r" },
 };
 
+/** Friendly preset names (gemini, nvidia, xai, …) — surfaced to the UI's provider/model switcher. */
+export function providerPresets(): { name: string; model: string }[] {
+  return Object.entries(PRESETS).map(([name, p]) => ({ name, model: p.model }));
+}
+
 /** Identify a provider from an API key's prefix — lets auto-detect recognise a key pasted straight into
  * VISHU_API_KEY (not just provider-named env vars). Order matters: specific prefixes before the bare sk-. */
 function detectFromKey(key: string): string | undefined {

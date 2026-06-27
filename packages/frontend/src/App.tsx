@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { startTurn, subscribeEvents } from "./api.js";
+import { Eval, Memory, Settings } from "./Panels.js";
 import { Tokens } from "./Tokens.js";
+
+type Tab = "chat" | "notifications" | "tokens" | "eval" | "memory" | "settings";
 
 interface Msg {
   role: "user" | "assistant" | "error";
@@ -12,12 +15,19 @@ export function App() {
   const [input, setInput] = useState("");
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [events, setEvents] = useState<string[]>([]);
+  const [notifs, setNotifs] = useState<string[]>([]);
+  const [seen, setSeen] = useState(0);
+  const [model, setModel] = useState(() => localStorage.getItem("vishu.model") ?? "");
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<"chat" | "tokens">("chat");
+  const [tab, setTab] = useState<Tab>("chat");
   const sessionId = useRef<string | undefined>(undefined);
   const log = useRef<HTMLDivElement>(null);
 
   useEffect(() => localStorage.setItem("vishu.token", token), [token]);
+  useEffect(() => localStorage.setItem("vishu.model", model), [model]);
+  useEffect(() => {
+    if (tab === "notifications") setSeen(notifs.length);
+  }, [tab, notifs.length]);
   // Desktop harness: ask the Rust host for a ready session so the user never pastes a token.
   // No-op in the browser/PWA (no __TAURI__), where the paste box stays the path. Polls until ready.
   useEffect(() => {
@@ -36,7 +46,11 @@ export function App() {
   }, []);
   useEffect(() => {
     if (!token) return;
-    return subscribeEvents(token, (e) => setEvents((prev) => [...prev.slice(-49), JSON.stringify(e)]));
+    return subscribeEvents(token, (e) => {
+      const s = JSON.stringify(e);
+      setEvents((prev) => [...prev.slice(-49), s]);
+      if (s.includes("notification")) setNotifs((prev) => [...prev.slice(-99), s]); // system/notification events
+    });
   }, [token]);
   useEffect(() => log.current?.scrollTo(0, log.current.scrollHeight), [msgs]);
   // PWA share target: text shared into Vishu arrives as ?text= — prefill the composer.
@@ -62,7 +76,7 @@ export function App() {
     setMsgs((m) => [...m, { role: "user", content: message }]);
     setBusy(true);
     try {
-      const r = await startTurn(token, message, sessionId.current);
+      const r = await startTurn(token, message, sessionId.current, model || undefined);
       sessionId.current = r.sessionId;
       setMsgs((m) => [...m, { role: "assistant", content: r.final }]);
     } catch (e) {
@@ -78,7 +92,13 @@ export function App() {
         <strong style={{ fontSize: 18 }}>Vishu</strong>
         <nav style={S.tabs}>
           <button style={tab === "chat" ? S.tabOn : S.tab} onClick={() => setTab("chat")}>Chat</button>
+          <button style={tab === "notifications" ? S.tabOn : S.tab} onClick={() => setTab("notifications")} disabled={!token}>
+            Notifications{notifs.length > seen ? ` (${notifs.length - seen})` : ""}
+          </button>
           <button style={tab === "tokens" ? S.tabOn : S.tab} onClick={() => setTab("tokens")} disabled={!token}>Tokens</button>
+          <button style={tab === "eval" ? S.tabOn : S.tab} onClick={() => setTab("eval")} disabled={!token}>Eval</button>
+          <button style={tab === "memory" ? S.tabOn : S.tab} onClick={() => setTab("memory")} disabled={!token}>Memory</button>
+          <button style={tab === "settings" ? S.tabOn : S.tab} onClick={() => setTab("settings")} disabled={!token}>Settings</button>
         </nav>
         <input
           style={S.token}
@@ -89,9 +109,19 @@ export function App() {
         />
       </header>
 
-      {tab === "tokens" ? (
-        <Tokens token={token} />
-      ) : (
+      {tab === "tokens" && <Tokens token={token} />}
+      {tab === "eval" && <Eval token={token} />}
+      {tab === "memory" && <Memory token={token} />}
+      {tab === "settings" && <Settings token={token} model={model} setModel={setModel} />}
+      {tab === "notifications" && (
+        <div style={{ ...S.chat, fontFamily: "ui-monospace, monospace", fontSize: 12 }}>
+          {notifs.length === 0 && <div style={{ color: "#888" }}>No notifications yet — budget alerts, triggers, and triage land here.</div>}
+          {notifs.map((n, i) => (
+            <div key={i} style={S.event}>{n}</div>
+          ))}
+        </div>
+      )}
+      {tab === "chat" && (
         <>
       <div style={S.body}>
         <div ref={log} style={S.chat}>

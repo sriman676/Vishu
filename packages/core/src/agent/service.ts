@@ -44,7 +44,7 @@ export class AgentService {
     return profile ? `${SYSTEM}\n\n${profile}` : SYSTEM;
   }
 
-  async startTurn(sessionId: string | undefined, message: string): Promise<TurnResult> {
+  async startTurn(sessionId: string | undefined, message: string, model?: string): Promise<TurnResult> {
     const session = sessionId ? this.store.get(sessionId) : this.store.create(this.systemPrompt());
     this.deps.twin?.record(message); // auto-record: repeated prompts become suggestions, unattended
     session.messages.push({ role: "user", content: message });
@@ -54,7 +54,7 @@ export class AgentService {
         registry: this.deps.tools,
         policy: this.deps.policy,
         terminal: this.deps.terminal,
-        model: this.deps.model,
+        model: model ?? this.deps.model, // per-turn model override (UI model switcher); ignored under a pool
         runLog: this.deps.runLog,
       },
       session.messages,

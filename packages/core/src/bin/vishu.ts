@@ -8,7 +8,8 @@ import { buildApp } from "../appbuilder/build.js";
 import { formatFindings } from "../appbuilder/security.js";
 import { type AppSpec, type InterviewTurn, interviewStep, persistSpec, specToMarkdown } from "../appbuilder/spec.js";
 import { AgentService } from "../agent/service.js";
-import { loadConfig } from "../config/config.js";
+import { loadConfig, providerPresets } from "../config/config.js";
+import { ok as okRpc } from "../transport/rpc.js";
 import { registerAutomation, registerAutofix } from "../automation/rpc.js";
 import { SchedulerGate } from "../automation/gate.js";
 import { attachNotificationSink } from "../automation/notify.js";
@@ -151,6 +152,16 @@ async function serve(): Promise<number> {
   registerReasoningTools(tools, { router, model: config.provider.model });
   registerReasoning(registry, { router, model: config.provider.model });
   registerReplay(registry, cassette);
+  // Read-only config summary for the UI's provider/model switcher + settings panel.
+  registry.register("vishu.config_summary", () =>
+    okRpc({
+      provider: config.provider.type,
+      model: config.provider.model,
+      keyMode: process.env.VISHU_KEY_MODE || "failover",
+      pool: Object.keys(config.providers),
+      presets: providerPresets(),
+    }),
+  );
   registerEvalRpc(registry, { router, model: config.provider.model, historyFile: join(config.paths.workspaceDir, "eval-history.jsonl") });
   const sessions = new SessionStore();
   const twin = new DigitalTwin(join(config.paths.workspaceDir, "twin.json"));

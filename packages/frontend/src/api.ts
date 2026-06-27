@@ -25,8 +25,27 @@ export interface TurnResult {
   turns: number;
 }
 
-export const startTurn = (token: string, message: string, sessionId?: string) =>
-  rpc<TurnResult>(token, "vishu.agent_start_turn", { message, sessionId });
+export const startTurn = (token: string, message: string, sessionId?: string, model?: string) =>
+  rpc<TurnResult>(token, "vishu.agent_start_turn", { message, sessionId, model });
+
+export interface ConfigSummary {
+  provider: string;
+  model: string;
+  keyMode: string;
+  pool: string[];
+  presets: { name: string; model: string }[];
+}
+export const configSummary = (token: string) => rpc<ConfigSummary>(token, "vishu.config_summary");
+
+export interface EvalResult { id: string; passed: boolean; score: number; ms: number; detail?: string }
+export interface EvalReport { runner: string; passRate: number; meanScore: number; results: EvalResult[] }
+export interface EvalTrend { runs: number; latest: number; previous?: number; delta?: number }
+export const evalRun = (token: string, runner: string) =>
+  rpc<{ report: EvalReport; trend: EvalTrend }>(token, "vishu.eval_run", { runner });
+
+export interface Recalled { name: string; type: string; body: string; score: number; via: string }
+export const memoryRecall = (token: string, query: string, limit = 8) =>
+  rpc<{ notes: Recalled[]; text: string }>(token, "vishu.memory_recall_memories", { query, limit });
 
 export interface CategoryStat {
   category: string;
