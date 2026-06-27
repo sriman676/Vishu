@@ -15,8 +15,8 @@ const scripted = (answers: Record<string, string>): Runner => async (prompt) => 
 };
 
 test("runEval grades answers and aggregates pass-rate + mean score", async () => {
-  const runner = scripted({ "17 + 25": "42", water: "H2O", "{\"ok\":true}": '{"ok":true}', "240 km": "wrong" });
-  const report = await runEval(BUILTIN_SUITE, runner, { runnerName: "test" });
+  const runner = scripted({ "17 + 25": "42", water: "H2O", "{\"ok\":true}": '{"ok":true}', "240 km in 3 hours": "wrong" });
+  const report = await runEval(BUILTIN_SUITE.slice(0, 4), runner, { runnerName: "test" }); // first 4 = the easy tier
   assert.equal(report.results.length, 4);
   assert.equal(report.passRate, 0.75); // 3 of 4 right (multistep is wrong)
   assert.equal(report.meanScore, 0.75);

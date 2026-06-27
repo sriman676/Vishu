@@ -25,4 +25,25 @@ export const BUILTIN_SUITE: EvalTask[] = [
     prompt: "A train travels 240 km in 3 hours. What is its average speed in km/h? Reply with just the number.",
     grade: hit(/\b80\b/),
   },
+  // Hard tier: tasks an 8B model is unreliable on single-shot, where sampling/ensembling should help.
+  {
+    id: "crt-bat-ball",
+    prompt: "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost, in cents? Reply with just the number.",
+    grade: hit(/(^|\D)5(\D|$)/),
+  },
+  {
+    id: "two-leg-distance",
+    prompt: "A train travels at 60 km/h for 2 hours, then at 90 km/h for 1 more hour. What total distance does it cover, in kilometres? Reply with just the number.",
+    grade: hit(/\b210\b/),
+  },
+  {
+    id: "letter-count",
+    prompt: "Count carefully: how many times does the letter 'r' appear in the word 'strawberry'? Reply with only the number.",
+    grade: hit(/\b3\b/),
+  },
+  {
+    id: "logic-order",
+    prompt: "Three friends finish a race. Anna beats Bella. Carol finishes before Anna. Who finished first? Reply with just the name.",
+    grade: hit(/\bcarol\b/i),
+  },
 ];

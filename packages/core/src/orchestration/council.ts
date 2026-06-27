@@ -92,11 +92,13 @@ export async function mixtureOfAgents(members: CouncilMember[], prompt: string, 
     const layerPrompt =
       prior.length === 0
         ? prompt
-        : `Other models proposed answers to the question. Use them as reference, then give your own improved answer.\n\nQuestion:\n${prompt}\n\nReferences:\n${refs(prior)}`;
+        : `Reference answers from other models are below. Answer the question in the exact format it asks for. If an answer is already correct, keep it unchanged rather than rewriting it.\n\nQuestion:\n${prompt}\n\nReferences:\n${refs(prior)}`;
     prior = await Promise.all(members.map((m) => ask(m, layerPrompt, opts.system, opts.category)));
     layerOutputs.push(prior);
   }
   const aggregator = opts.aggregator ?? members[0]!;
-  const final = await ask(aggregator, `Synthesize the single best answer to the question from these candidate responses.\n\nQuestion:\n${prompt}\n\nCandidates:\n${refs(prior)}`, opts.system, opts.category);
+  // Faithful aggregation: return the consensus answer in the asked-for format, don't "improve" a correct
+  // one. ponytail: prompt-level fix; a small judge model picking the majority is the named upgrade.
+  const final = await ask(aggregator, `Candidate answers to a question are below. Return the single best final answer in the exact format the question asks for, and nothing else. If the candidates agree, return that answer unchanged.\n\nQuestion:\n${prompt}\n\nCandidates:\n${refs(prior)}`, opts.system, opts.category);
   return { final, layerOutputs };
 }
