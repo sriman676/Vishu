@@ -4,6 +4,7 @@ import { assertWritable, decideCommand, jailPath, SecurityError } from "../secur
 import { guardInjection } from "../security/injection.js";
 import { htmlToMarkdown } from "../tokenjuice/html.js";
 import { compressShellOutput } from "../tokenjuice/shellfilter.js";
+import { retrieveOriginal, stashOriginal } from "../tokenjuice/reversible.js";
 import { ToolRegistry } from "./registry.js";
 import type { Tool } from "./types.js";
 
@@ -61,8 +62,11 @@ const runShell: Tool = {
     if (!decision.allowed) throw new SecurityError(`command refused (${decision.reason}): ${command}`);
     const { stdout, exitCode } = await ctx.terminal.exec(command);
     // Squeeze noisy command output before it enters the model context (RTK-style, in-process).
-    const { text } = compressShellOutput(command, stdout, exitCode ?? 0);
-    return clip(`exit=${exitCode}\n${text}`);
+    const { text, beforeLines, afterLines } = compressShellOutput(command, stdout, exitCode ?? 0);
+    let out = `exit=${exitCode}\n${text}`;
+    // Reversible: when output was compressed, stash the original and offer a ref to retrieve it in full.
+    if (afterLines < beforeLines) out += `\n[compressed ${beforeLines}→${afterLines} lines · retrieve_original("${stashOriginal(stdout)}") for the full output]`;
+    return clip(out);
   },
 };
 
@@ -92,7 +96,16 @@ const webSearch: Tool = {
   },
 };
 
+const retrieveOriginalTool: Tool = {
+  name: "retrieve_original",
+  description: "Retrieve the full, uncompressed output that was elided from an earlier compressed tool result, by its ref.",
+  parameters: { type: "object", properties: { ref: { type: "string" } }, required: ["ref"] },
+  async run(args) {
+    return retrieveOriginal(str(args.ref, "ref")) ?? "[retrieve_original] unknown or expired ref";
+  },
+};
+
 export function registerBuiltins(registry: ToolRegistry): ToolRegistry {
-  [readFile, writeFile, listDir, runShell, webFetch, webSearch].forEach((t) => registry.register(t));
+  [readFile, writeFile, listDir, runShell, webFetch, webSearch, retrieveOriginalTool].forEach((t) => registry.register(t));
   return registry;
 }

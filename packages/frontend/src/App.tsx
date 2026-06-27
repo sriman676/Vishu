@@ -89,19 +89,17 @@ export function App() {
   return (
     <div style={S.page}>
       <header style={S.header}>
-        <strong style={{ fontSize: 18 }}>Vishu</strong>
+        <strong style={{ fontSize: 18, letterSpacing: "-0.02em", color: "var(--accent)", fontFamily: "var(--font-display)" }}>Vishu</strong>
         <nav style={S.tabs}>
-          <button style={tab === "chat" ? S.tabOn : S.tab} onClick={() => setTab("chat")}>Chat</button>
-          <button style={tab === "notifications" ? S.tabOn : S.tab} onClick={() => setTab("notifications")} disabled={!token}>
-            Notifications{notifs.length > seen ? ` (${notifs.length - seen})` : ""}
-          </button>
-          <button style={tab === "tokens" ? S.tabOn : S.tab} onClick={() => setTab("tokens")} disabled={!token}>Tokens</button>
-          <button style={tab === "eval" ? S.tabOn : S.tab} onClick={() => setTab("eval")} disabled={!token}>Eval</button>
-          <button style={tab === "memory" ? S.tabOn : S.tab} onClick={() => setTab("memory")} disabled={!token}>Memory</button>
-          <button style={tab === "settings" ? S.tabOn : S.tab} onClick={() => setTab("settings")} disabled={!token}>Settings</button>
+          {(["chat", "notifications", "tokens", "eval", "memory", "settings"] as Tab[]).map((t) => (
+            <button key={t} className={tab === t ? "btn on" : "btn"} onClick={() => setTab(t)} disabled={t !== "chat" && !token}>
+              {t === "notifications" ? `Notifications${notifs.length > seen ? ` (${notifs.length - seen})` : ""}` : t[0].toUpperCase() + t.slice(1)}
+            </button>
+          ))}
         </nav>
         <input
-          style={S.token}
+          className="input"
+          style={{ marginLeft: "auto", width: 280 }}
           type="password"
           placeholder="paste core.token"
           value={token}
@@ -145,17 +143,18 @@ export function App() {
 
       <footer style={S.footer}>
         <input
-          style={S.input}
+          className="input"
+          style={{ flex: 1 }}
           placeholder={token ? "Message Vishu…" : "Set the token first"}
           value={input}
           disabled={!token || busy}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
         />
-        <button style={S.mic} onClick={startVoice} disabled={!token} title="Voice capture">
+        <button className="btn" onClick={startVoice} disabled={!token} title="Voice capture">
           🎤
         </button>
-        <button style={S.send} onClick={send} disabled={!token || busy || !input.trim()}>
+        <button className="btn primary" onClick={send} disabled={!token || busy || !input.trim()}>
           {busy ? "…" : "Send"}
         </button>
       </footer>
@@ -166,27 +165,21 @@ export function App() {
 }
 
 const roleStyle: Record<Msg["role"], React.CSSProperties> = {
-  user: { background: "#1e2a3a" },
-  assistant: { background: "#1c2a1c" },
-  error: { background: "#3a1e1e", color: "#ffb4b4" },
+  user: { background: "var(--surface-2)" },
+  assistant: { background: "color-mix(in oklab, var(--accent) 12%, var(--surface-1))" },
+  error: { background: "color-mix(in oklab, var(--danger) 16%, var(--surface-1))", color: "var(--danger)" },
 };
 
 const S: Record<string, React.CSSProperties> = {
-  page: { display: "flex", flexDirection: "column", height: "100vh", margin: 0, fontFamily: "system-ui, sans-serif", background: "#0e1116", color: "#e6e6e6" },
-  header: { display: "flex", gap: 12, alignItems: "center", padding: "10px 16px", borderBottom: "1px solid #222" },
-  tabs: { display: "flex", gap: 4 },
-  tab: { padding: "5px 12px", background: "transparent", color: "#8aa", border: "1px solid #2a2f37", borderRadius: 6, cursor: "pointer" },
-  tabOn: { padding: "5px 12px", background: "#1e2a3a", color: "#e6e6e6", border: "1px solid #2b6cb0", borderRadius: 6, cursor: "pointer" },
-  token: { marginLeft: "auto", width: 280, padding: "6px 8px", background: "#161a20", color: "#e6e6e6", border: "1px solid #2a2f37", borderRadius: 6 },
+  page: { display: "flex", flexDirection: "column", height: "100vh", fontFamily: "var(--font-body)" },
+  header: { display: "flex", gap: "var(--space-md)", alignItems: "center", padding: "10px 16px", borderBottom: "1px solid var(--line)" },
+  tabs: { display: "flex", gap: "var(--space-xs)", flexWrap: "wrap" },
   body: { display: "flex", flex: 1, minHeight: 0 },
-  chat: { flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 8 },
-  msg: { padding: "8px 12px", borderRadius: 8, display: "flex", flexDirection: "column", gap: 4, maxWidth: 760 },
-  role: { fontSize: 11, textTransform: "uppercase", color: "#8aa", letterSpacing: 0.5 },
-  events: { width: 320, borderLeft: "1px solid #222", overflowY: "auto", padding: 12, fontSize: 11, fontFamily: "ui-monospace, monospace" },
-  eventsTitle: { color: "#8aa", marginBottom: 8 },
-  event: { padding: "4px 0", borderBottom: "1px solid #1a1d22", wordBreak: "break-all", color: "#9bb" },
-  footer: { display: "flex", gap: 8, padding: 12, borderTop: "1px solid #222" },
-  input: { flex: 1, padding: "10px 12px", background: "#161a20", color: "#e6e6e6", border: "1px solid #2a2f37", borderRadius: 8 },
-  mic: { padding: "10px 14px", background: "#161a20", color: "#e6e6e6", border: "1px solid #2a2f37", borderRadius: 8, cursor: "pointer" },
-  send: { padding: "10px 20px", background: "#2b6cb0", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" },
+  chat: { flex: 1, overflowY: "auto", padding: "var(--space-lg)", display: "flex", flexDirection: "column", gap: "var(--space-sm)" },
+  msg: { padding: "8px 12px", borderRadius: "var(--radius)", display: "flex", flexDirection: "column", gap: 4, maxWidth: 760 },
+  role: { fontSize: 11, textTransform: "uppercase", color: "var(--accent)", letterSpacing: 0.5 },
+  events: { width: 320, borderLeft: "1px solid var(--line)", overflowY: "auto", padding: "var(--space-md)", fontSize: 11, fontFamily: "var(--font-mono)" },
+  eventsTitle: { color: "var(--ink-muted)", marginBottom: "var(--space-sm)" },
+  event: { padding: "4px 0", borderBottom: "1px solid var(--line)", wordBreak: "break-all", color: "var(--ink-muted)" },
+  footer: { display: "flex", gap: "var(--space-sm)", padding: "var(--space-md)", borderTop: "1px solid var(--line)" },
 };

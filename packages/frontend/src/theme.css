@@ -1,0 +1,140 @@
+/* Hallmark · component: app-shell · genre: atmospheric (dark dev-tool) · theme: studied-DNA (Vishu brand mint→teal)
+ * pre-emit critique: P5 H4 E4 S4 R5 V4
+ * states: default · hover · focus-visible · active · disabled
+ * contrast: pass (text on paper ≥ 7:1, accent on paper ≥ 4.5:1)
+ * ponytail: system-font pairing (offline-first PWA — no web-font network dep); tracking + weight carry the
+ * display voice. Swap in a loaded display face here if a packaged build wants one.
+ */
+:root {
+  /* paper + surfaces — dark, low-chroma cool */
+  --paper: oklch(17% 0.012 255);
+  --surface-1: oklch(21% 0.014 255);
+  --surface-2: oklch(25% 0.016 255);
+  --line: oklch(32% 0.014 255);
+  /* ink */
+  --ink: oklch(93% 0.006 255);
+  --ink-muted: oklch(72% 0.018 245);
+  --ink-faint: oklch(58% 0.018 245);
+  /* accent — the brand mint→teal */
+  --accent: oklch(78% 0.13 178);
+  --accent-2: oklch(70% 0.12 200);
+  --accent-ink: oklch(20% 0.03 200);
+  --danger: oklch(70% 0.15 25);
+  --ok: oklch(80% 0.15 150);
+  --focus: oklch(82% 0.13 185);
+  /* type */
+  --font-display: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  /* 4pt spacing scale */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --radius: 8px;
+  --radius-sm: 6px;
+  /* motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur: 140ms;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  overflow-x: clip;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--surface-2);
+}
+
+/* ── interactive primitives (all states) ───────────────────────────── */
+.btn {
+  font: inherit;
+  padding: var(--space-sm) var(--space-lg);
+  background: var(--surface-1);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
+}
+.btn:hover {
+  background: var(--surface-2);
+  border-color: var(--accent-2);
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+.btn.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: transparent;
+  font-weight: 600;
+}
+.btn.primary:hover {
+  background: var(--accent-2);
+}
+.btn.on {
+  background: color-mix(in oklab, var(--accent) 22%, var(--surface-1));
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.input {
+  font: inherit;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--dur) var(--ease-out);
+}
+.input::placeholder {
+  color: var(--ink-faint);
+}
+.input:hover {
+  border-color: var(--surface-2);
+}
+.input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.card {
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-md);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 1ms !important;
+  }
+}

@@ -43,14 +43,19 @@ pnpm vishu serve                              # JSON-RPC core (loopback)
 
 Drop a key into `.env` and leave `VISHU_PROVIDER` unset. Vishu identifies the provider from the key's prefix:
 
-| Key prefix | Provider | | Presets (`VISHU_PROVIDER=`) |
-|---|---|---|---|
-| `sk-ant-…` | Anthropic | | `gemini`, `openrouter`, `groq`, `deepseek`, |
-| `nvapi-…` | NVIDIA NIM | | `nvidia`, `mistral`, `together`, `fireworks`, |
-| `AIza…` | Google Gemini | | `xai`, `perplexity`, `cohere` |
-| `gsk_…` | Groq | | |
-| `sk-or-…` `fw_…` `xai-…` `pplx-…` | OpenRouter / Fireworks / xAI / Perplexity | | (presets auto-wire endpoint + a default model — |
-| `sk-…` | OpenAI | | override with `VISHU_MODEL`) |
+| Key prefix | Provider |
+|---|---|
+| `sk-ant-…` | Anthropic |
+| `nvapi-…` | NVIDIA NIM |
+| `AIza…` | Google Gemini |
+| `gsk_…` | Groq |
+| `sk-or-…` | OpenRouter |
+| `fw_…` | Fireworks |
+| `xai-…` | xAI (Grok) |
+| `pplx-…` | Perplexity |
+| `sk-…` | OpenAI |
+
+Or set `VISHU_PROVIDER` to a **preset** that auto-wires the endpoint + a default model (override with `VISHU_MODEL`): `gemini`, `openrouter`, `groq`, `deepseek`, `nvidia`, `mistral`, `together`, `fireworks`, `xai`, `perplexity`, `cohere`.
 
 It also reads standard env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY`, …). Any key var accepts a **comma-separated list** for failover.
 
@@ -81,7 +86,7 @@ It also reads standard env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_
 | **Reasoning amplifiers** | `solve` (difficulty-routed), best-of-N self-consistency, Mixture-of-Agents, Reflexion — `vishu.reasoning_*`. |
 | **Eval harness** | `vishu eval [baseline\|effort\|moa]` — scores runners on a task suite and tracks the trend over time. |
 | **Secure app builder** | `vishu build` — spec interview → verify → chunked Arbor build → deterministic OWASP scan + bounded remediation → maintainability gate. |
-| **TokenJuice** | HTML→Markdown, dedup, transcript compaction, active context curation, RTK-style per-command shell-output compression. |
+| **TokenJuice** | HTML→Markdown, dedup, transcript compaction, active context curation, RTK-style per-command shell-output compression, and **reversible compression** (elided output is stashed under a ref the model can `retrieve_original`). |
 | **Connectors / MCP** | stdio MCP client (tools/resources/prompts + reconnect + sampling), inbound triage, outbound `Connector` seam, realtime SSE. |
 | **Optional modules** | Off by default behind `VISHU_MODULES`: `wallet` (EVM/Solana/BTC signing), `imagegen`, `voice` (whisper sidecar), `desktop`, `report` (research docs), `artifacts`, `pairing`, `selfupdate`. A throwing module can't crash the core. |
 | **Frontend** | React/Vite + PWA over the `vishu.*` contract: chat, a **notifications** panel (budget/trigger/triage alerts, unread badge), **eval** + **token** dashboards, a **memory/vault browser**, and a **settings** panel showing the active provider/model/key-mode/pool with a model switcher. Rust/Tauri harness supervises the core and hands the UI a ready token. |

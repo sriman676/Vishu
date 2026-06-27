@@ -3,8 +3,15 @@ import { test } from "node:test";
 import type { ChatMessage } from "../providers/types.js";
 import { compactTranscript } from "./compact.js";
 import { htmlToMarkdown } from "./html.js";
+import { retrieveOriginal, stashOriginal } from "./reversible.js";
 import { compressShellOutput } from "./shellfilter.js";
 import { dedupeLines, summarizeToolResult } from "./summarize.js";
+
+test("reversible: a stashed original round-trips by ref; unknown ref is undefined", () => {
+  const ref = stashOriginal("the full uncompressed output\nline 2\nline 3");
+  assert.match(retrieveOriginal(ref)!, /line 3/);
+  assert.equal(retrieveOriginal("orig-nope"), undefined);
+});
 
 test("compressShellOutput drops install noise, keeps errors, leaves short output alone", () => {
   const noisy = [
