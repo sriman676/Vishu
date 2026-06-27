@@ -6,6 +6,7 @@
   "type": "module",
   "engines": { "node": ">=24" },
   "scripts": {
+    "setup": "node setup.mjs",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "vishu": "node packages/core/dist/bin/vishu.js",

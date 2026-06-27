@@ -24,10 +24,15 @@ CLI-first, cross-platform (built and tested on Windows), with a React/PWA fronte
 
 ## Quickstart
 
-```bash
-pnpm install              # Node 24+, pnpm workspace
-pnpm -r build
+**One command** to install + build (Windows PowerShell/cmd, Linux/bash, macOS — only Node ≥ 24 required; it provisions pnpm via corepack):
 
+```bash
+node setup.mjs            # or: npm run setup
+```
+
+Then:
+
+```bash
 cp .env.example .env      # then paste your key into VISHU_API_KEY (see below)
 
 pnpm vishu chat "explain this repo"
