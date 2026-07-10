@@ -98,18 +98,33 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentOutcom
     const tier = narrowTier(opts.parentPolicy.tier, opts.tier ?? opts.parentPolicy.tier);
     const policy: SecurityPolicy = makePolicy(tier, worktree);
     const registry = narrowRegistry(opts.parentRegistry, opts.archetype);
-    const messages = [
+    const baseMessages = [
       { role: "system" as const, content: `${opts.archetype.system}\n\nParent context:\n${opts.parentContext}` },
       { role: "user" as const, content: opts.task },
     ];
     const terminal = new Terminal(worktree);
     // Fail-closed F0 gate for the subagent: gated classes need an explicit yes (none wired → denied).
     const gate = new ApprovalGate("automatic", opts.ask ?? (async () => false), { actionOf: (n) => registry.getAction(n) });
-    const result = await runToolLoop(
-      { router: opts.router, registry, policy, terminal, model: opts.model, runLog: opts.runLog, approve: (c) => gate.decide(c) },
-      messages,
-      opts.maxIterations ?? 6,
-    ).finally(() => terminal.close());
+    // runToolLoop mutates its transcript, so each attempt gets a fresh copy — a retry never inherits a
+    // half-written conversation. retry-once: a mid-run crash (provider exhausted, etc.) gets a single
+    // clean retry before it propagates to the outer catch (worktree cleanup + throw).
+    const runLoop = () =>
+      runToolLoop(
+        { router: opts.router, registry, policy, terminal, model: opts.model, runLog: opts.runLog, approve: (c) => gate.decide(c) },
+        baseMessages.map((m) => ({ ...m })),
+        opts.maxIterations ?? 6,
+      );
+    let result: Awaited<ReturnType<typeof runLoop>>;
+    try {
+      try {
+        result = await runLoop();
+      } catch (e) {
+        opts.runLog?.log("subagent_retry", `${opts.archetype.name} crashed, retrying once: ${e instanceof Error ? e.message : String(e)}`);
+        result = await runLoop();
+      }
+    } finally {
+      terminal.close();
+    }
     const validation = opts.validate ? await opts.validate(worktree) : { ok: true, output: "no validator" };
     let merged = false;
     if (validation.ok && opts.harvest) merged = harvestBranch(opts.repoDir, worktree, branch, opts.runLog);

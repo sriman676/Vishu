@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { EchoProvider, ScriptedProvider } from "../providers/mock.js";
 import { Router } from "../providers/router.js";
+import type { ChatResponse, Provider } from "../providers/types.js";
 import { makePolicy } from "../security/policy.js";
 import { registerBuiltins } from "../tools/builtins.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -193,6 +194,32 @@ test("parallel mode: branches race, the winner is auto-merged and failed-branch 
   assert.equal(readFileSync(join(repoDir, "artifact.txt"), "utf8"), "winner"); // its work landed in the repo
   assert.equal(result.learnings.length, 1); // the failed branch's lesson is still collected
   assert.match(result.final, /Cross-branch learnings/); // …and backpropagated into the result
+});
+
+test("subagent retries once after a mid-run crash, then succeeds", async () => {
+  let calls = 0;
+  const crashOnce: Provider = {
+    name: "crash-once",
+    async chat(): Promise<ChatResponse> {
+      if (calls++ === 0) throw new Error("boom"); // first attempt crashes mid-run
+      return { content: "recovered", finish: "stop" };
+    },
+    chatStream(req) {
+      return this.chat(req);
+    },
+  };
+  const outcome = await runSubagent({
+    archetype: ARCHETYPES.coder!,
+    task: "do the thing",
+    parentContext: "ctx",
+    parentPolicy: makePolicy("full", mkdtempSync(join(tmpdir(), "vishu-retry-"))),
+    parentRegistry: registerBuiltins(new ToolRegistry()),
+    router: new Router([crashOnce]),
+    model: "mock",
+    repoDir: mkdtempSync(join(tmpdir(), "vishu-retry-")),
+  });
+  assert.equal(outcome.final, "recovered");
+  assert.equal(calls, 2); // crashed once, retried once — exactly one retry
 });
 
 test("harvest: the winning branch's work is merged back into the action repo", async () => {
