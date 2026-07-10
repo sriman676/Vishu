@@ -1,5 +1,6 @@
 import type { Router } from "../providers/router.js";
 import type { ChatMessage } from "../providers/types.js";
+import { ApprovalGate, type AskFn, type Autonomy } from "../reliability/approvals.js";
 import type { RunLog } from "../reliability/runlog.js";
 import type { SecurityPolicy } from "../security/policy.js";
 import type { IdentityProfile } from "../personalization/profile.js";
@@ -20,6 +21,10 @@ export interface AgentDeps {
   twin?: DigitalTwin;
   /** Cross-session identity profile: its notes load into the system prompt of each new session. */
   profile?: IdentityProfile;
+  /** How autonomously to act (default ask_every_time — the safe default). */
+  autonomy?: Autonomy;
+  /** How to ask the human for approval. Absent → deny gated actions (fail-closed: no UI = no unattended send/spend). */
+  ask?: AskFn;
 }
 
 export interface TurnResult {
@@ -33,10 +38,18 @@ const SYSTEM = "You are Vishu, a helpful coding agent. Use tools to build, run, 
 
 /** Drives full agent turns; backs the `vishu.agent_*` RPC surface. */
 export class AgentService {
+  private readonly gate: ApprovalGate;
   constructor(
     private readonly deps: AgentDeps,
     private readonly store = new SessionStore(),
-  ) {}
+  ) {
+    // Fail-closed: with no approval UI wired, ask() denies — send/spend/delete/change_setting
+    // never run unattended. Reads and safe writes still flow. Gate reads action class from the registry
+    // and honours the global pause flag file by default.
+    this.gate = new ApprovalGate(deps.autonomy ?? "ask_every_time", deps.ask ?? (async () => false), {
+      actionOf: (name) => deps.tools.getAction(name),
+    });
+  }
 
   /** Base system prompt plus the user's identity profile (when non-empty) so the agent "knows you". */
   private systemPrompt(): string {
@@ -56,6 +69,7 @@ export class AgentService {
         terminal: this.deps.terminal,
         model: model ?? this.deps.model, // per-turn model override (UI model switcher); ignored under a pool
         runLog: this.deps.runLog,
+        approve: (call) => this.gate.decide(call), // F0 gate — every tool call passes through here
       },
       session.messages,
     );

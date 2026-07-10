@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Router } from "../providers/router.js";
+import { ApprovalGate, type AskFn } from "../reliability/approvals.js";
 import type { RunLog } from "../reliability/runlog.js";
 import { makePolicy, type SecurityPolicy, type Tier } from "../security/policy.js";
 import { runToolLoop } from "../tools/loop.js";
@@ -36,6 +37,9 @@ export interface SubagentOptions {
   keepWorktree?: boolean;
   maxIterations?: number;
   runLog?: RunLog;
+  /** Approve the subagent's gated actions. Absent → deny (fail-closed: a background subagent never
+   * sends/spends/deletes/changes settings unattended). Reads + writes in its worktree flow freely. */
+  ask?: AskFn;
 }
 
 export interface SubagentOutcome {
@@ -99,8 +103,10 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentOutcom
       { role: "user" as const, content: opts.task },
     ];
     const terminal = new Terminal(worktree);
+    // Fail-closed F0 gate for the subagent: gated classes need an explicit yes (none wired → denied).
+    const gate = new ApprovalGate("automatic", opts.ask ?? (async () => false), { actionOf: (n) => registry.getAction(n) });
     const result = await runToolLoop(
-      { router: opts.router, registry, policy, terminal, model: opts.model, runLog: opts.runLog },
+      { router: opts.router, registry, policy, terminal, model: opts.model, runLog: opts.runLog, approve: (c) => gate.decide(c) },
       messages,
       opts.maxIterations ?? 6,
     ).finally(() => terminal.close());

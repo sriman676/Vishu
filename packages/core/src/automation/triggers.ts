@@ -25,6 +25,8 @@ export interface TriggerDeps {
   run: StepRunner;
   /** Background runs only proceed unattended at `automatic`; otherwise they're parked for approval. */
   autonomy: Autonomy;
+  /** Global pause predicate — while paused, no trigger fires (default: the flag-file check). */
+  isPaused?: () => boolean;
   tickMs?: number; // cron heartbeat (default 5s)
   runLog?: RunLog;
 }
@@ -86,6 +88,10 @@ export class TriggerManager {
   }
 
   private async fire(trigger: Trigger, cause?: DomainEvent): Promise<void> {
+    if (this.deps.isPaused?.()) {
+      this.deps.runLog?.log("trigger_paused", `${trigger.id} skipped (global pause)`);
+      return;
+    }
     if (!this.deps.gate.allows()) {
       this.deps.runLog?.log("trigger_throttled", trigger.id);
       return;

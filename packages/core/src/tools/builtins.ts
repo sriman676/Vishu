@@ -1,10 +1,11 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { assertWritable, decideCommand, jailPath, SecurityError } from "../security/policy.js";
+import { assertWritable, decideCommand, decideEgress, jailPath, SecurityError } from "../security/policy.js";
 import { guardInjection } from "../security/injection.js";
 import { htmlToMarkdown } from "../tokenjuice/html.js";
 import { compressShellOutput } from "../tokenjuice/shellfilter.js";
 import { retrieveOriginal, stashOriginal } from "../tokenjuice/reversible.js";
+import { pauseTools } from "../automation/pause.js";
 import { ToolRegistry } from "./registry.js";
 import type { Tool } from "./types.js";
 
@@ -17,6 +18,7 @@ const clip = (s: string, max = 20_000): string => (s.length > max ? `${s.slice(0
 const readFile: Tool = {
   name: "read_file",
   description: "Read a UTF-8 file inside the action directory.",
+  meta: { action: "read" },
   parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
   async run(args, ctx) {
     const abs = jailPath(ctx.policy, str(args.path, "path"));
@@ -27,6 +29,7 @@ const readFile: Tool = {
 const writeFile: Tool = {
   name: "write_file",
   description: "Write a UTF-8 file inside the action directory (creates parent dirs).",
+  meta: { action: "write" },
   parameters: {
     type: "object",
     properties: { path: { type: "string" }, content: { type: "string" } },
@@ -43,6 +46,7 @@ const writeFile: Tool = {
 const listDir: Tool = {
   name: "list_dir",
   description: "List entries of a directory inside the action directory.",
+  meta: { action: "read" },
   parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
   async run(args, ctx) {
     const abs = jailPath(ctx.policy, str(args.path ?? ".", "path"));
@@ -55,6 +59,7 @@ const listDir: Tool = {
 const runShell: Tool = {
   name: "run_shell",
   description: "Run a shell command in the action directory's terminal and return its output.",
+  meta: { action: "write" }, // command-level risk (delete/send) is graded separately by classifyCommand
   parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
   async run(args, ctx) {
     const command = str(args.command, "command");
@@ -73,20 +78,24 @@ const runShell: Tool = {
 const webFetch: Tool = {
   name: "web_fetch",
   description: "Fetch a URL and return its body text.",
+  meta: { action: "read" }, // GET only; egress host is checked + logged by decideEgress
   parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
   async run(args) {
     const url = str(args.url, "url");
+    const eg = decideEgress(url); // Phase 1.4: log non-allowlisted egress, don't block (research is legit).
+    const warn = eg.allowlisted ? "" : `[egress] outbound to non-allowlisted host "${eg.host || url}" (${eg.reason ?? "not on allowlist"})\n`;
     const res = await fetch(url);
     const body = await res.text();
-    if (guardInjection(body) === "block") return "[web_fetch] content blocked by injection guard";
+    if (guardInjection(body) === "block") return `${warn}[web_fetch] content blocked by injection guard`;
     const isHtml = (res.headers.get("content-type") ?? "").includes("html") || /^\s*<(!doctype|html)/i.test(body);
-    return clip(isHtml ? htmlToMarkdown(body) : body);
+    return warn + clip(isHtml ? htmlToMarkdown(body) : body);
   },
 };
 
 const webSearch: Tool = {
   name: "web_search",
   description: "Search the web (requires VISHU_SEARCH_URL configured).",
+  meta: { action: "read" },
   parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
   async run(args) {
     const base = process.env.VISHU_SEARCH_URL;
@@ -99,6 +108,7 @@ const webSearch: Tool = {
 const retrieveOriginalTool: Tool = {
   name: "retrieve_original",
   description: "Retrieve the full, uncompressed output that was elided from an earlier compressed tool result, by its ref.",
+  meta: { action: "read" },
   parameters: { type: "object", properties: { ref: { type: "string" } }, required: ["ref"] },
   async run(args) {
     return retrieveOriginal(str(args.ref, "ref")) ?? "[retrieve_original] unknown or expired ref";
@@ -106,6 +116,6 @@ const retrieveOriginalTool: Tool = {
 };
 
 export function registerBuiltins(registry: ToolRegistry): ToolRegistry {
-  [readFile, writeFile, listDir, runShell, webFetch, webSearch, retrieveOriginalTool].forEach((t) => registry.register(t));
+  [readFile, writeFile, listDir, runShell, webFetch, webSearch, retrieveOriginalTool, ...pauseTools].forEach((t) => registry.register(t));
   return registry;
 }
