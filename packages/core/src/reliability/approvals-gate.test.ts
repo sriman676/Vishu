@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import type { ActionClass } from "../security/actions.js";
 import { ApprovalGate } from "./approvals.js";
@@ -27,6 +30,24 @@ test("a send tool is asked EVERY time — ask_once never remembers a dangerous c
   await gate.decide(call("outreach_send"));
   await gate.decide(call("outreach_send"));
   assert.equal(asks, 2); // no memoization for send/spend/delete/change_setting
+});
+
+test("ask_once remembers persist across gate instances / restarts (UPGRADES §1)", async () => {
+  const file = join(mkdtempSync(join(tmpdir(), "vishu-remember-")), "approvals.json");
+  const risky = () => call("run_shell", { command: "git push" }); // klass=risky → reaches the ask_once path
+  const gate = (onAsk: () => boolean, count: { n: number }) =>
+    new ApprovalGate("ask_once", async () => (count.n++, onAsk()), { actionOf: () => "write", isPaused: () => false, rememberFile: file });
+
+  const a = { n: 0 };
+  const g1 = gate(() => true, a);
+  assert.equal((await g1.decide(risky())).allowed, true);
+  assert.equal((await g1.decide(risky())).allowed, true); // remembered in-memory
+  assert.equal(a.n, 1, "asked once, then remembered");
+
+  const b = { n: 0 };
+  const g2 = gate(() => false, b); // fresh instance = a "restart"; would deny if it re-asked
+  assert.equal((await g2.decide(risky())).allowed, true, "loaded the persisted yes from disk");
+  assert.equal(b.n, 0, "never asked — the remember survived the restart");
 });
 
 test("reads still auto-allow under automatic", async () => {

@@ -1,3 +1,5 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { ToolCall } from "../providers/types.js";
 import { isPaused as defaultIsPaused } from "../automation/pause.js";
 import { type ActionClass, classifyTool, NEVER_WITHOUT_ASKING } from "../security/actions.js";
@@ -27,6 +29,8 @@ export interface ApprovalOpts {
   isPaused?: () => boolean;
   /** Append-only decision log (UPGRADES §2). Absent → decisions aren't persisted. */
   audit?: AuditLog;
+  /** Persist ask_once remembers here so a remembered "yes" survives restart (UPGRADES §1). Absent → in-memory only. */
+  rememberFile?: string;
 }
 
 // Pausing must work even while paused, so the pause controls themselves are never pause-denied.
@@ -41,6 +45,7 @@ export class ApprovalGate {
   private readonly actionOf: (name: string) => ActionClass;
   private readonly isPaused: () => boolean;
   private readonly audit?: AuditLog;
+  private readonly rememberFile?: string;
   constructor(
     private readonly autonomy: Autonomy,
     private readonly ask: AskFn,
@@ -49,6 +54,29 @@ export class ApprovalGate {
     this.actionOf = opts.actionOf ?? classifyTool;
     this.isPaused = opts.isPaused ?? defaultIsPaused;
     this.audit = opts.audit;
+    this.rememberFile = opts.rememberFile;
+    this.loadRemembered();
+  }
+
+  /** Load persisted ask_once remembers (best-effort — a missing/corrupt file just starts empty). */
+  private loadRemembered(): void {
+    if (!this.rememberFile) return;
+    try {
+      const obj = JSON.parse(readFileSync(this.rememberFile, "utf8")) as Record<string, boolean>;
+      for (const [k, v] of Object.entries(obj)) this.remembered.set(k, Boolean(v));
+    } catch {
+      /* no file yet or unreadable — remembers just start empty */
+    }
+  }
+
+  private saveRemembered(): void {
+    if (!this.rememberFile) return;
+    try {
+      mkdirSync(dirname(this.rememberFile), { recursive: true });
+      writeFileSync(this.rememberFile, JSON.stringify(Object.fromEntries(this.remembered)));
+    } catch {
+      /* best-effort — losing a persisted remember is safe (worst case: it asks again) */
+    }
   }
 
   async decide(call: ToolCall): Promise<ApprovalDecision> {
@@ -80,7 +108,10 @@ export class ApprovalGate {
     }
 
     const ok = await this.ask({ tool: call.name, summary: summarize(call), klass, action });
-    if (this.autonomy === "ask_once") this.remembered.set(call.name, ok);
+    if (this.autonomy === "ask_once") {
+      this.remembered.set(call.name, ok);
+      this.saveRemembered(); // durable across restarts (UPGRADES §1)
+    }
     return { allowed: ok, reason: ok ? undefined : "user denied" };
   }
 }

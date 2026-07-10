@@ -28,6 +28,8 @@ export interface AgentDeps {
   ask?: AskFn;
   /** Append-only decision log (UPGRADES §2). Absent → gate decisions aren't persisted. */
   audit?: AuditLog;
+  /** Persist ask_once remembers here so they survive restart (UPGRADES §1). Absent → in-memory only. */
+  rememberFile?: string;
 }
 
 export interface TurnResult {
@@ -52,6 +54,7 @@ export class AgentService {
     this.gate = new ApprovalGate(deps.autonomy ?? "ask_every_time", deps.ask ?? (async () => false), {
       actionOf: (name) => deps.tools.getAction(name),
       audit: deps.audit,
+      rememberFile: deps.rememberFile,
     });
   }
 

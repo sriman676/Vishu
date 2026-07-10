@@ -177,6 +177,8 @@ async function serve(): Promise<number> {
   const ask = makeAsk(terminalPrompt);
   // Durable append-only decision log — every gate verdict lands here across runs (UPGRADES §2).
   const audit = new AuditLog();
+  // ask_once remembers persist here so a remembered "yes" survives restart (UPGRADES §1).
+  const rememberFile = join(config.paths.workspaceDir, "approvals.json");
   // Boot invariants (UPGRADES §5): never come up ungated, unlogged, or unable to pause. Fail loud.
   assertBoot(selfCheck({ gateWired: Boolean(ask) }), (s) => process.stdout.write(s));
   const agentService = new AgentService({
@@ -190,6 +192,7 @@ async function serve(): Promise<number> {
     profile,
     ask,
     audit,
+    rememberFile,
   }, sessions);
   registerAgent(registry, agentService);
 
@@ -200,7 +203,7 @@ async function serve(): Promise<number> {
     const terminal = new Terminal(config.paths.actionDir);
     try {
       const svc = new AgentService(
-        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile, ask, audit },
+        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile, ask, audit, rememberFile },
         sessions,
       );
       return await svc.startTurn(sid, msg);
