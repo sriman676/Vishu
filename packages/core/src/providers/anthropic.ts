@@ -21,6 +21,10 @@ export class AnthropicProvider implements Provider {
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => ({ role: m.role, content: m.content }));
 
+    // Extended thinking (orchestrator/decision calls only). API requires max_tokens > budget_tokens.
+    const budget = req.thinking?.budgetTokens;
+    const maxTokens = budget ? Math.max(req.maxTokens ?? 4096, budget + 1024) : req.maxTokens ?? 4096;
+
     const res = await fetch(`${this.cfg.baseUrl}/v1/messages`, {
       method: "POST",
       headers: {
@@ -32,13 +36,14 @@ export class AnthropicProvider implements Provider {
         model: req.model,
         system,
         messages,
-        max_tokens: req.maxTokens ?? 4096,
+        max_tokens: maxTokens,
+        ...(budget ? { thinking: { type: "enabled", budget_tokens: budget } } : {}),
         tools: req.tools?.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters })),
       }),
     });
     if (!res.ok) throw statusError(res.status, await res.text());
     const json = (await res.json()) as {
-      content?: ({ type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> })[];
+      content?: ({ type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> } | { type: "thinking" | "redacted_thinking" })[];
       stop_reason?: string;
       usage?: { input_tokens?: number; output_tokens?: number };
     };
@@ -46,7 +51,8 @@ export class AnthropicProvider implements Provider {
     const toolCalls: ToolCall[] = [];
     for (const block of json.content ?? []) {
       if (block.type === "text") content += block.text;
-      else toolCalls.push({ id: block.id, name: block.name, arguments: block.input });
+      else if (block.type === "tool_use") toolCalls.push({ id: block.id, name: block.name, arguments: block.input });
+      // thinking/redacted_thinking blocks are internal reasoning — not surfaced.
     }
     return {
       content,

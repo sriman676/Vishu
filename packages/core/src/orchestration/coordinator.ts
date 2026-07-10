@@ -19,6 +19,9 @@ export interface CoordinatorDeps {
   /** Approve subagents' gated actions (UPGRADES §4). Absent → deny-only (fail-closed): a supervised
    * orchestration can pass a real ask so a subagent requests approval instead of only being blocked. */
   ask?: AskFn;
+  /** Extended-thinking budget for the orchestrator's own decision calls (hypothesis/dispatch routing).
+   * Applies to the coordinator's reasoning only — never handed to subagents' tool loops. */
+  thinkingBudget?: number;
 }
 
 export interface CoordinatorOptions {
@@ -78,6 +81,7 @@ export class Coordinator {
         { role: "user", content: `List up to ${max} distinct approaches to accomplish:\n${goal}` },
       ],
       category: "orchestration",
+      ...(this.deps.thinkingBudget ? { thinking: { budgetTokens: this.deps.thinkingBudget } } : {}),
     });
     const hypotheses = parseHypotheses(res.content, max);
     if (hypotheses.length === 0) hypotheses.push(goal); // degrade: treat the goal itself as the one branch
