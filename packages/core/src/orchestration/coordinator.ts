@@ -5,6 +5,7 @@ import type { SecurityPolicy } from "../security/policy.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { parallelMap } from "../util/parallel.js";
 import { ARCHETYPES, type Archetype, synthesizeArchetype } from "./archetypes.js";
+import type { AgentFactory } from "./factory.js";
 import { commandValidator, harvestBranch, runSubagent, type ValidationResult } from "./subagent.js";
 
 type SubagentOutcome = Awaited<ReturnType<typeof runSubagent>>;
@@ -22,6 +23,9 @@ export interface CoordinatorDeps {
   /** Extended-thinking budget for the orchestrator's own decision calls (hypothesis/dispatch routing).
    * Applies to the coordinator's reasoning only — never handed to subagents' tool loops. */
   thinkingBudget?: number;
+  /** Approved bespoke agents from the factory. When set, `dispatch` routes a task naming one of them to
+   * that agent (Step 5 loop closure) — approved agents become runtime-routable, ahead of generic presets. */
+  factory?: AgentFactory;
 }
 
 export interface CoordinatorOptions {
@@ -99,10 +103,38 @@ export class Coordinator {
       return { kind: "clarify", question: `"${task.trim()}" is too brief to route — tell me the goal and any target (file, repo, or topic).` };
     }
     const lower = task.toLowerCase();
+    // A user-approved bespoke agent, named in the task, wins over generic presets — deliberately-built
+    // agents beat keyword defaults. Name matched as a whole word (escaped, so any name is literal).
+    const custom = this.deps.factory?.agents().find((a) => new RegExp(`\\b${a.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(lower));
+    if (custom) return { kind: "archetype", archetype: custom };
     for (const [re, name] of PRESET_RULES) {
       if (re.test(lower)) return { kind: "archetype", archetype: ARCHETYPES[name]! };
     }
     return { kind: "synthesized", archetype: synthesizeArchetype(task, this.deps.parentRegistry) };
+  }
+
+  /** Route ONE task with `dispatch`, then actually run the chosen archetype as an isolated subagent —
+   * the runtime path that makes approved agents routable. A too-vague task returns its clarifying
+   * question instead of executing. The subagent gates its own side effects via `deps.ask` (deny-only
+   * when absent), same contract as every other subagent. */
+  async dispatchAndRun(task: string): Promise<string> {
+    const decision = this.dispatch(task);
+    if (decision.kind === "clarify") return decision.question;
+    this.deps.runLog?.log("dispatch", `${decision.kind}:${decision.archetype.name} ← ${task}`);
+    const outcome = await runSubagent({
+      archetype: decision.archetype,
+      task,
+      parentContext: `Task: ${task}`,
+      parentPolicy: this.deps.parentPolicy,
+      parentRegistry: this.deps.parentRegistry,
+      router: this.deps.router,
+      model: this.deps.model,
+      repoDir: this.deps.repoDir,
+      runLog: this.deps.runLog,
+      ask: this.deps.ask,
+      harvest: true,
+    });
+    return outcome.final;
   }
 
   async run(goal: string, opts: CoordinatorOptions = {}): Promise<OrchestrationResult> {

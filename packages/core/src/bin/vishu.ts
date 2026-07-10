@@ -32,6 +32,7 @@ import { DigitalTwin } from "../personalization/twin.js";
 import { IdentityProfile } from "../personalization/profile.js";
 import { registerEvolve, registerProfile, registerTwin } from "../personalization/rpc.js";
 import { registerOrchestrationTools } from "../orchestration/tools.js";
+import { AgentFactory } from "../orchestration/factory.js";
 import { buildRoles } from "../orchestration/roles.js";
 import { registerReasoning } from "../reasoning/rpc.js";
 import { registerReasoningTools } from "../reasoning/tools.js";
@@ -154,7 +155,6 @@ async function serve(): Promise<number> {
   registerMemoryTools(tools, memory);
   registerMemory(registry, memory);
   registerUsage(registry, config.paths.workspaceDir);
-  registerOrchestrationTools(tools, { roles, model: config.provider.model });
   registerReasoningTools(tools, { router, model: config.provider.model });
   registerReasoning(registry, { router, model: config.provider.model });
   registerReplay(registry, cassette);
@@ -182,6 +182,11 @@ async function serve(): Promise<number> {
   // Daily send-cap counter (PLAN F7 ≤30/day; VISHU_SEND_CAP overrides), persisted across restarts.
   const sendCapFile = join(config.paths.workspaceDir, "send-count.json");
   const sendCap = Number(process.env.VISHU_SEND_CAP) || 30;
+  // Agent factory + orchestration tools: registered here (not earlier) so the factory shares the same
+  // `ask`/`audit` gate. `create_agent` gates registration; approved agents persist in agents.json and
+  // become routable by the `dispatch` tool (Phase 1 Step 5 loop closure).
+  const factory = new AgentFactory(tools, skills, { ask, audit, storePath: join(config.paths.workspaceDir, "agents.json") });
+  registerOrchestrationTools(tools, { roles, model: config.provider.model, factory });
   // Boot invariants (UPGRADES §5): never come up ungated, unlogged, or unable to pause. Fail loud.
   assertBoot(selfCheck({ gateWired: Boolean(ask) }), (s) => process.stdout.write(s));
   const agentService = new AgentService({

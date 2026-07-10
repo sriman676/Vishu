@@ -10,9 +10,11 @@ import { makePolicy } from "../security/policy.js";
 import { registerBuiltins } from "../tools/builtins.js";
 import { ToolRegistry } from "../tools/registry.js";
 import type { Tool } from "../tools/types.js";
+import { SkillIndex } from "../skills/index.js";
 import { ARCHETYPES, narrowRegistry, narrowTier, synthesizeArchetype } from "./archetypes.js";
 import { council, mixtureOfAgents } from "./council.js";
 import { Coordinator } from "./coordinator.js";
+import { AgentFactory } from "./factory.js";
 import { NoParentContextError, runSubagent } from "./subagent.js";
 
 test("council: members answer, judge picks the winner", async () => {
@@ -124,6 +126,32 @@ test("dispatch: routes to preset archetype | synthesized | clarify", () => {
   const vague = coordinator.dispatch("do it");
   assert.equal(vague.kind, "clarify"); // too brief → one clarifying question, not a guess
   assert.match(vague.kind === "clarify" ? vague.question : "", /too brief/);
+});
+
+test("dispatch: a factory-approved agent named in the task is routed to, ahead of presets (Step 5 loop)", async () => {
+  const parent = registerBuiltins(new ToolRegistry());
+  const factory = new AgentFactory(parent, new SkillIndex(), { ask: async () => true });
+  await factory.approveAndRegister(factory.propose("telugu-translator", "translate telugu text to english"));
+
+  const coordinator = new Coordinator({
+    router: new Router([new EchoProvider()]),
+    model: "mock",
+    parentPolicy: makePolicy("full", mkdtempSync(join(tmpdir(), "vishu-fac-"))),
+    parentRegistry: parent,
+    repoDir: mkdtempSync(join(tmpdir(), "vishu-fac-")),
+    factory,
+  });
+
+  const named = coordinator.dispatch("please run telugu-translator on this paragraph");
+  assert.equal(named.kind, "archetype");
+  assert.equal(named.kind === "archetype" && named.archetype.name, "telugu-translator", "approved agent wins over any preset");
+
+  // A task that doesn't name the agent still routes by the normal rules (no hijack).
+  const unrelated = coordinator.dispatch("translate this telugu paragraph into english");
+  assert.equal(unrelated.kind, "synthesized");
+
+  // dispatchAndRun on a too-vague task returns the clarifying question without executing anything.
+  assert.match(await coordinator.dispatchAndRun("do it"), /too brief/);
 });
 
 test("orchestrated request fans out, prunes a failed branch, returns one result", async () => {
