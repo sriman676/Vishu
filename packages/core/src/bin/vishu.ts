@@ -48,6 +48,7 @@ import { buildPoolRouter, buildRouter } from "../providers/factory.js";
 import { RunLog } from "../reliability/runlog.js";
 import { makeAsk, terminalPrompt } from "../reliability/ask.js";
 import { AuditLog } from "../security/audit.js";
+import { assertBoot, selfCheck } from "../reliability/selfcheck.js";
 import { isPaused, pause, pauseFile, resume } from "../automation/pause.js";
 import { makePolicy } from "../security/policy.js";
 import { SkillIndex } from "../skills/index.js";
@@ -176,6 +177,8 @@ async function serve(): Promise<number> {
   const ask = makeAsk(terminalPrompt);
   // Durable append-only decision log — every gate verdict lands here across runs (UPGRADES §2).
   const audit = new AuditLog();
+  // Boot invariants (UPGRADES §5): never come up ungated, unlogged, or unable to pause. Fail loud.
+  assertBoot(selfCheck({ gateWired: Boolean(ask) }), (s) => process.stdout.write(s));
   const agentService = new AgentService({
     router,
     tools,
