@@ -74,11 +74,23 @@ export interface EgressDecision {
   reason?: string;
 }
 
-/** The active egress allowlist: defaults ∪ VISHU_EGRESS_ALLOWLIST (comma-separated hosts). */
+// Hosts contributed by attached domains (UPGRADES §2d) — each plugged-in domain declares its own
+// intended egress (JobAutomation job boards, research APIs, …) in jarvis.domains.json, registered here.
+const registeredEgressHosts = new Set<string>();
+
+/** Fold a domain's declared egress hosts into the allowlist (called by DomainManager at start). */
+export function registerEgressHosts(hosts: readonly string[]): void {
+  for (const h of hosts) {
+    const host = h.trim().toLowerCase();
+    if (host) registeredEgressHosts.add(host);
+  }
+}
+
+/** The active egress allowlist: defaults ∪ VISHU_EGRESS_ALLOWLIST ∪ per-domain registered hosts. */
 export function egressAllowlist(): Set<string> {
   const extra = (process.env.VISHU_EGRESS_ALLOWLIST ?? "")
     .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-  return new Set([...DEFAULT_EGRESS_HOSTS, ...extra]);
+  return new Set([...DEFAULT_EGRESS_HOSTS, ...extra, ...registeredEgressHosts]);
 }
 
 /** Classify an outbound URL against the egress allowlist. Malformed URL → not allowlisted. */

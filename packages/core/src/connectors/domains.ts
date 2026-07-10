@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { ActionClass } from "../security/actions.js";
+import { registerEgressHosts } from "../security/policy.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { EventBus } from "../transport/events.js";
 import { McpClient, type McpSampler, registerMcpTools } from "./mcp.js";
@@ -13,6 +14,8 @@ export interface DomainConfig {
   reconnect?: boolean; // respawn on unexpected close (default true)
   /** Per-tool action class for the F0 gate; key "*" is the default for tools not listed. */
   actions?: Record<string, ActionClass>;
+  /** Hosts this domain is expected to reach (UPGRADES §2d) — folded into the egress allowlist at start. */
+  egressHosts?: string[];
 }
 
 /** Read `jarvis.domains.json`. Optional: a missing/invalid file means "no domains" (never throws). */
@@ -42,6 +45,7 @@ export class DomainManager {
   async start(): Promise<string[]> {
     const all: string[] = [];
     for (const cfg of this.configs) {
+      if (cfg.egressHosts?.length) registerEgressHosts(cfg.egressHosts); // §2d: domain declares its own hosts
       const client = new McpClient(cfg.cmd, cfg.args ?? [], {
         reconnect: cfg.reconnect ?? true,
         sampler: this.opts.sampler,

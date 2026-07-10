@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { egressAllowlist } from "../security/policy.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { DomainManager, loadDomains } from "./domains.js";
 
@@ -48,6 +49,21 @@ test('DomainManager: the "*" action is the default for tools not explicitly list
   try {
     await dm.start();
     assert.equal(registry.getAction("careerops__add"), "delete"); // falls back to the "*" default
+  } finally {
+    dm.stop();
+  }
+});
+
+test("DomainManager: a domain's declared egressHosts fold into the egress allowlist (UPGRADES §2d)", async () => {
+  const host = "boards.example-jobs.test";
+  assert.equal(egressAllowlist().has(host), false); // not there before the domain starts
+  const dm = new DomainManager(
+    [{ id: "careerops", cmd: process.execPath, args: [stub()], reconnect: false, egressHosts: [host] }],
+    new ToolRegistry(),
+  );
+  try {
+    await dm.start();
+    assert.equal(egressAllowlist().has(host), true); // now allowlisted for this domain's intended egress
   } finally {
     dm.stop();
   }
