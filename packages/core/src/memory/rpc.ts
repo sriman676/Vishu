@@ -11,9 +11,9 @@ export function registerMemory(registry: Registry, store: MemoryStore): void {
   });
 
   registry.register("vishu.memory_recall_memories", async (params) => {
-    const p = (params ?? {}) as { query?: string; limit?: number };
+    const p = (params ?? {}) as { query?: string; limit?: number; folder?: string };
     if (!p.query) return err("invalid_params", "query is required");
-    return ok(await store.recall(p.query, p.limit));
+    return ok(await store.recall(p.query, { limit: p.limit, folder: p.folder }));
   });
 
   registry.register("vishu.memory_reindex", () => ok({ notes: store.reindex() }));

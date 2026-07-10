@@ -1,7 +1,7 @@
 import type { Embedder } from "../providers/types.js";
 import { RunLog } from "../reliability/runlog.js";
 import { MemoryIndex } from "./index.js";
-import { extractLinks, slugify, Vault, type Note } from "./vault.js";
+import { extractLinks, normFolder, slugify, Vault, type Note } from "./vault.js";
 
 /** Age-based confidence decay: a fact halves its ranking weight every HALFLIFE days, so newer facts
  * win near-ties. ponytail: simple exponential half-life; tune HALFLIFE if recall favours stale notes. */
@@ -16,6 +16,8 @@ export interface PutInput {
   type?: string;
   /** Contradiction key: writing a new note with the same subject supersedes the prior one. */
   subject?: string;
+  /** Physical partition under the vault (e.g. "core", "modes/interview"); undefined = root. */
+  folder?: string;
 }
 
 export interface Recalled {
@@ -61,9 +63,9 @@ export class MemoryStore {
     /** Optional: enables semantic recall. Absent = FTS + lexical + smart-walk only (no regression). */
     private readonly embedder?: Embedder,
   ) {
-    this.vault = new Vault(vaultDir);
-    this.index = new MemoryIndex(dbFile);
     this.log = new RunLog(eventLogFile);
+    this.vault = new Vault(vaultDir, this.log); // vault mutations tee to the audit log
+    this.index = new MemoryIndex(dbFile);
     // Self-heal: a fresh/blank index next to a populated vault rebuilds itself on open.
     if (this.index.isEmpty() && this.vault.list().length) this.reindex();
   }
@@ -111,6 +113,7 @@ export class MemoryStore {
       name: this.uniqueName(input.subject ?? input.content),
       type: input.type ?? "fact",
       subject: input.subject,
+      folder: input.folder,
       created: now,
       updated: now,
       body: input.content,
@@ -137,7 +140,12 @@ export class MemoryStore {
 
   /** Hybrid recall: FTS/lexical match, then a one-hop smart-walk over [[links]] to gather context.
    * Superseded notes are excluded; newest wins on ties. Returns only the gathered notes, not a dump. */
-  async recall(query: string, limit = 5): Promise<RecallResult> {
+  async recall(query: string, opts: { limit?: number; folder?: string } = {}): Promise<RecallResult> {
+    const limit = opts.limit ?? 5;
+    // Mode partition: when a folder is given, gather only that partition ∪ core ∪ root (shared);
+    // sibling mode folders are excluded so one mode never recalls another's private notes.
+    const scope = normFolder(opts.folder);
+    const inScope = (f?: string) => !scope || !f || f === scope || f === "core";
     const hits = this.guard(() => this.index.search(query, limit * 2), []);
 
     // Semantic overlay: blend cosine into FTS hits and surface vector-only candidates FTS missed.
@@ -150,7 +158,7 @@ export class MemoryStore {
 
     for (const name of candidates) {
       const note = this.vault.read(name);
-      if (!note || note.supersededBy) continue;
+      if (!note || note.supersededBy || !inScope(note.folder)) continue;
       const fts = ftsScore.get(name) ?? 0;
       if (fts < 0) continue; // superseded per the index
       const lex = lexicalOverlap(query, `${note.subject ?? ""} ${note.body}`);
@@ -161,7 +169,7 @@ export class MemoryStore {
       for (const target of note.links) {
         if (gathered.has(target)) continue;
         const neighbor = this.vault.read(target);
-        if (!neighbor || neighbor.supersededBy) continue;
+        if (!neighbor || neighbor.supersededBy || !inScope(neighbor.folder)) continue;
         gathered.set(neighbor.name, {
           name: neighbor.name,
           type: neighbor.type,
