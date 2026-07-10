@@ -64,8 +64,15 @@ export function proposeAgent(name: string, task: string, parent: ToolRegistry, s
  * "No silent agent-to-agent chaining" is enforced structurally: a proposal is inert until
  * `approveAndRegister` clears the gate, the drafted prompt forbids spawning, and tools ⊆ parent (no
  * spawn tool exists to hand out). */
+/** A registered agent, plus the wishlist recorded at proposal time so the human can later fulfil it
+ * (grant a cap once the system actually exposes it). Extends Archetype, so any Archetype consumer works. */
+export interface RegisteredAgent extends Archetype {
+  /** Caps the cited skills implied but the parent lacked — surfaced by `list`, fulfilled by `grantTool`. */
+  wishlist?: string[];
+}
+
 export class AgentFactory {
-  private readonly approved = new Map<string, Archetype>();
+  private readonly approved = new Map<string, RegisteredAgent>();
   private readonly gate: ApprovalGate;
 
   constructor(
@@ -90,7 +97,7 @@ export class AgentFactory {
       this.opts.runLog?.log("agent_register_denied", `${p.name}: ${decision.reason ?? "denied"}`);
       return { registered: false, reason: decision.reason };
     }
-    const archetype: Archetype = { name: p.name, system: p.system, tools: p.tools };
+    const archetype: RegisteredAgent = { name: p.name, system: p.system, tools: p.tools, wishlist: p.toolWishlist };
     this.approved.set(p.name, archetype);
     if (this.opts.storePath) this.persist(this.opts.storePath);
     this.opts.runLog?.log("agent_registered", p.name);
@@ -98,12 +105,42 @@ export class AgentFactory {
   }
 
   /** Live approved agents — a consumer (dispatch/bin) reads this and sees new agents with no restart. */
-  agents(): Archetype[] {
+  agents(): RegisteredAgent[] {
     return [...this.approved.values()];
   }
 
-  get(name: string): Archetype | undefined {
+  get(name: string): RegisteredAgent | undefined {
     return this.approved.get(name);
+  }
+
+  /** Revoke an approved agent (gated: change_setting). A stale or over-scoped agent must be removable at
+   * runtime — otherwise "no silent agent" erodes as the fleet grows. Denied/no-ask → left in place. */
+  async revoke(name: string): Promise<{ removed: boolean; reason?: string }> {
+    if (!this.approved.has(name)) return { removed: false, reason: `no agent named "${name}"` };
+    const decision = await this.gate.decide({ id: `revoke-${name}`, name: "revoke_agent", arguments: { name } });
+    if (!decision.allowed) return { removed: false, reason: decision.reason ?? "denied" };
+    this.approved.delete(name);
+    if (this.opts.storePath) this.persist(this.opts.storePath);
+    this.opts.runLog?.log("agent_revoked", name);
+    return { removed: true };
+  }
+
+  /** Fulfil a wishlist item: grant a tool to an agent (gated). Honestly bounded by the ⊆-parent invariant
+   * — a tool the parent doesn't expose can't be granted (the capability doesn't exist yet; add it to the
+   * system first, then grant). Granting clears the item from the agent's wishlist. */
+  async grantTool(name: string, tool: string): Promise<{ granted: boolean; reason?: string }> {
+    const agent = this.approved.get(name);
+    if (!agent) return { granted: false, reason: `no agent named "${name}"` };
+    if (agent.tools === "inherit") return { granted: false, reason: `"${name}" already inherits all tools` };
+    if (!this.parent.schemas().some((s) => s.name === tool)) return { granted: false, reason: `tool "${tool}" is not available in the system — add it first, then grant (⊆-parent invariant)` };
+    if (agent.tools.includes(tool)) return { granted: false, reason: `"${name}" already has "${tool}"` };
+    const decision = await this.gate.decide({ id: `grant-${name}-${tool}`, name: "grant_tool", arguments: { name, tool } });
+    if (!decision.allowed) return { granted: false, reason: decision.reason ?? "denied" };
+    agent.tools = [...agent.tools, tool];
+    agent.wishlist = agent.wishlist?.filter((w) => w !== tool);
+    if (this.opts.storePath) this.persist(this.opts.storePath);
+    this.opts.runLog?.log("agent_granted", `${name} += ${tool}`);
+    return { granted: true };
   }
 
   private persist(path: string): void {
@@ -117,8 +154,8 @@ export class AgentFactory {
 
   private load(path: string): void {
     try {
-      const arr = JSON.parse(readFileSync(path, "utf8")) as Archetype[];
-      for (const a of arr) if (a?.name) this.approved.set(a.name, { name: a.name, system: a.system, tools: a.tools });
+      const arr = JSON.parse(readFileSync(path, "utf8")) as RegisteredAgent[];
+      for (const a of arr) if (a?.name) this.approved.set(a.name, { name: a.name, system: a.system, tools: a.tools, wishlist: a.wishlist });
     } catch {
       /* no store yet or unreadable — start empty */
     }
