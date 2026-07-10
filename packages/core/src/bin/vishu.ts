@@ -46,6 +46,8 @@ import { BUILTIN_SUITE } from "../eval/suite.js";
 import { loadSweBenchLite, runSweBench } from "../eval/swebench.js";
 import { buildPoolRouter, buildRouter } from "../providers/factory.js";
 import { RunLog } from "../reliability/runlog.js";
+import { makeAsk, terminalPrompt } from "../reliability/ask.js";
+import { isPaused, pause, pauseFile, resume } from "../automation/pause.js";
 import { makePolicy } from "../security/policy.js";
 import { SkillIndex } from "../skills/index.js";
 import { registerSkillTools } from "../skills/tools.js";
@@ -168,6 +170,9 @@ async function serve(): Promise<number> {
   const sessions = new SessionStore();
   const twin = new DigitalTwin(join(config.paths.workspaceDir, "twin.json"));
   const profile = new IdentityProfile(join(config.paths.workspaceDir, "profile.json"));
+  // F0 approval channel: one terminal y/N prompt per gated action, shared across every turn so prompts
+  // serialize on one stdin. No TTY (detached) → denies, keeping the fail-closed guarantee for send/spend/delete.
+  const ask = makeAsk(terminalPrompt);
   const agentService = new AgentService({
     router,
     tools,
@@ -177,6 +182,7 @@ async function serve(): Promise<number> {
     runLog: new RunLog(),
     twin,
     profile,
+    ask,
   }, sessions);
   registerAgent(registry, agentService);
 
@@ -187,7 +193,7 @@ async function serve(): Promise<number> {
     const terminal = new Terminal(config.paths.actionDir);
     try {
       const svc = new AgentService(
-        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile },
+        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile, ask },
         sessions,
       );
       return await svc.startTurn(sid, msg);
@@ -474,6 +480,17 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd === "serve") return serve();
   if (cmd === "jarvis") return serve(); // the full PA runtime: serve + domain services from jarvis.domains.json
+  if (cmd === "pause") {
+    // Flag-file kill switch — works out-of-band whether or not a core is running (survives restart).
+    pause(argv.slice(1).join(" "));
+    process.stdout.write(`[pause] engaged → ${pauseFile()}\n`);
+    return 0;
+  }
+  if (cmd === "resume") {
+    resume();
+    process.stdout.write(`[resume] cleared${isPaused() ? " (still paused: another PAUSED file?)" : ""}\n`);
+    return 0;
+  }
   if (cmd === "chat") {
     const text = argv.slice(1).join(" ");
     if (!text) return usageErr("vishu chat <message>");
@@ -506,6 +523,8 @@ async function main(argv: string[]): Promise<number> {
       "  vishu config                 print resolved config + paths",
       "  vishu serve                  start the JSON-RPC core (loopback)",
       "  vishu jarvis                 start the full PA runtime (serve + domain services)",
+      "  vishu pause [reason]         engage the global kill switch (denies all gated actions)",
+      "  vishu resume                 clear the global pause",
       "  vishu chat <message>         one-shot chat via the configured provider",
       "  vishu agent <task>           run the tool loop (build/run inside action_dir)",
       "  vishu build <what>           guided secure app builder: spec interview → build → pentest",
