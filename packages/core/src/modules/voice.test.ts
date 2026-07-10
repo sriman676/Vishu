@@ -20,6 +20,30 @@ test("voice: callSidecar rejects when the command can't spawn", async () => {
   await assert.rejects(callSidecar(["definitely-not-a-real-binary-xyz"], {}));
 });
 
+// A node stub for the TTS sidecar: echoes an audio_path + engine; and an error variant.
+const TTS_STUB = `let b="";process.stdin.on("data",d=>b+=d);process.stdin.on("end",()=>{const r=JSON.parse(b);process.stdout.write(JSON.stringify({audio_path:"/tmp/out.mp3",engine:r.voice_id?"elevenlabs":"piper"})+"\\n")});`;
+const TTS_ERR_STUB = `process.stdin.on("data",()=>{});process.stdout.write(JSON.stringify({error:"no TTS engine available"})+"\\n");`;
+
+test("voice_speak: returns the audio path + engine, surfaces sidecar errors, never crashes", async () => {
+  const prev = process.env.VISHU_TTS_CMD;
+  try {
+    const c = { tools: new ToolRegistry(), rpc: new Registry(), bus: new EventBus(), workspaceDir: "." };
+    await loadModules(MODULES, c, enabledModules({ VISHU_MODULES: "voice" }));
+
+    process.env.VISHU_TTS_CMD = JSON.stringify(["node", "-e", TTS_STUB]);
+    assert.equal(await c.tools.get("voice_speak").run({ text: "hello" }, {} as never), "/tmp/out.mp3 (piper)");
+    assert.equal(await c.tools.get("voice_speak").run({ text: "hi", voice_id: "v1" }, {} as never), "/tmp/out.mp3 (elevenlabs)");
+
+    process.env.VISHU_TTS_CMD = JSON.stringify(["node", "-e", TTS_ERR_STUB]);
+    assert.match(await c.tools.get("voice_speak").run({ text: "hi" }, {} as never), /no TTS engine available/);
+
+    assert.match(await c.tools.get("voice_speak").run({}, {} as never), /text is required/);
+  } finally {
+    if (prev === undefined) delete process.env.VISHU_TTS_CMD;
+    else process.env.VISHU_TTS_CMD = prev;
+  }
+});
+
 test("voice_transcribe: returns text via the sidecar, surfaces sidecar errors, never crashes", async () => {
   const prev = process.env.VISHU_VOICE_CMD;
   try {
