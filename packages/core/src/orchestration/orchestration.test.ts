@@ -9,7 +9,7 @@ import { makePolicy } from "../security/policy.js";
 import { registerBuiltins } from "../tools/builtins.js";
 import { ToolRegistry } from "../tools/registry.js";
 import type { Tool } from "../tools/types.js";
-import { ARCHETYPES, narrowRegistry, narrowTier } from "./archetypes.js";
+import { ARCHETYPES, narrowRegistry, narrowTier, synthesizeArchetype } from "./archetypes.js";
 import { council, mixtureOfAgents } from "./council.js";
 import { Coordinator } from "./coordinator.js";
 import { NoParentContextError, runSubagent } from "./subagent.js";
@@ -62,6 +62,27 @@ test("inherit-and-narrow: tier only drops, tools are parent ∩ archetype", () =
   const child = narrowRegistry(parent, ARCHETYPES.critic!); // critic: read_file, list_dir, run_shell, memory_recall
   const names = child.schemas().map((s) => s.name).sort();
   assert.deepEqual(names, ["list_dir", "read_file", "run_shell"]); // memory_recall absent from parent → can't appear
+});
+
+test("synthesizeArchetype: a novel task yields tools ⊆ parent registry (never widens, never empty)", () => {
+  const parent = registerBuiltins(new ToolRegistry());
+  const parentNames = new Set(parent.schemas().map((s) => s.name));
+
+  const arch = synthesizeArchetype("read the config file and search the web for the answer", parent);
+  const tools = arch.tools as string[];
+  assert.ok(tools.length > 0, "synthesized toolset is never empty");
+  assert.ok(tools.every((t) => parentNames.has(t)), "every tool is one the parent has (⊆ parent)");
+  assert.ok(tools.includes("read_file") && tools.includes("web_search"), "keyword-relevant tools selected");
+
+  // narrowRegistry enforces the ⊆-parent invariant a second time.
+  const child = narrowRegistry(parent, arch);
+  assert.ok(child.schemas().every((s) => parentNames.has(s.name)));
+
+  // A task with no tool-relevant keywords falls back to the parent's read-only core, still ⊆ parent.
+  const fallback = synthesizeArchetype("ponder existential questions quietly", parent);
+  const fbTools = fallback.tools as string[];
+  assert.ok(fbTools.length > 0 && fbTools.every((t) => parentNames.has(t)));
+  assert.ok(!fbTools.includes("run_shell") && !fbTools.includes("write_file"), "fallback is read-only");
 });
 
 test("subagent refuses to spawn without parent context (NoParentContext contract)", async () => {
