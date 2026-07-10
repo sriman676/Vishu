@@ -287,6 +287,14 @@ async function serve(): Promise<number> {
   const stop = () => void running.close().then(() => process.exit(0));
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
+  // UPGRADES §5: an out-of-band instant pause — hit it mid-runaway without the agent's cooperation.
+  // Ctrl+Break on Windows (SIGINT/Ctrl+C still stops); SIGUSR2 on POSIX (`kill -USR2 <pid>`).
+  const pauseSignal: NodeJS.Signals = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
+  process.on(pauseSignal, () => {
+    pause(`${pauseSignal} kill switch`);
+    process.stdout.write(`\n[pause] engaged via ${pauseSignal} — every gated action now denied; \`vishu resume\` to clear\n`);
+  });
+  process.stdout.write(`[serve] instant pause: ${pauseSignal === "SIGBREAK" ? "Ctrl+Break" : "kill -USR2 " + process.pid}\n`);
   return new Promise<number>(() => {}); // run until signalled
 }
 
