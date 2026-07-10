@@ -101,6 +101,30 @@ test("subagent refuses to spawn without parent context (NoParentContext contract
   );
 });
 
+test("dispatch: routes to preset archetype | synthesized | clarify", () => {
+  const coordinator = new Coordinator({
+    router: new Router([new EchoProvider()]),
+    model: "mock",
+    parentPolicy: makePolicy("full", mkdtempSync(join(tmpdir(), "vishu-disp-"))),
+    parentRegistry: registerBuiltins(new ToolRegistry()),
+    repoDir: mkdtempSync(join(tmpdir(), "vishu-disp-")),
+  });
+
+  const review = coordinator.dispatch("review the auth module and run the tests");
+  assert.equal(review.kind, "archetype");
+  assert.equal(review.kind === "archetype" && review.archetype.name, "critic");
+
+  const build = coordinator.dispatch("implement a login form in the app");
+  assert.equal(build.kind === "archetype" && build.archetype.name, "coder");
+
+  const novel = coordinator.dispatch("translate this telugu paragraph into english");
+  assert.equal(novel.kind, "synthesized"); // matches no preset keyword → bespoke archetype
+
+  const vague = coordinator.dispatch("do it");
+  assert.equal(vague.kind, "clarify"); // too brief → one clarifying question, not a guess
+  assert.match(vague.kind === "clarify" ? vague.question : "", /too brief/);
+});
+
 test("orchestrated request fans out, prunes a failed branch, returns one result", async () => {
   const repoDir = mkdtempSync(join(tmpdir(), "vishu-orch-"));
   // call 0: hypotheses; call 1: branch-a subagent turn; call 2: branch-b subagent turn.

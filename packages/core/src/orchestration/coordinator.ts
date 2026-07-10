@@ -4,7 +4,7 @@ import type { RunLog } from "../reliability/runlog.js";
 import type { SecurityPolicy } from "../security/policy.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { parallelMap } from "../util/parallel.js";
-import { ARCHETYPES } from "./archetypes.js";
+import { ARCHETYPES, type Archetype, synthesizeArchetype } from "./archetypes.js";
 import { commandValidator, harvestBranch, runSubagent, type ValidationResult } from "./subagent.js";
 
 type SubagentOutcome = Awaited<ReturnType<typeof runSubagent>>;
@@ -57,6 +57,23 @@ export interface OrchestrationResult {
   merged: boolean;
 }
 
+/** How `dispatch` routes an intent to a preset archetype. First rule that matches wins, so order is
+ * specificity: review/test before build, build before research, research before plan. */
+const PRESET_RULES: [RegExp, string][] = [
+  [/\b(review|audit|critique|test|verify|check)\b/, "critic"],
+  [/\b(implement|build|code|write|fix|refactor|create|add|edit)\b/, "coder"],
+  [/\b(research|investigate|gather|find out|look up|summar)\b/, "researcher"],
+  [/\b(plan|design|outline|break down|steps)\b/, "planner"],
+];
+
+/** The routing outcome for a single task: a preset/synthesized archetype to execute, or a clarifying
+ * question when the task is too vague to act on. (A `mode` arm — interview/teacher/… personas — lands in
+ * Phase 4 when orchestration/modes.ts exists; deferred here, not invented.) */
+export type DispatchDecision =
+  | { kind: "archetype"; archetype: Archetype }
+  | { kind: "synthesized"; archetype: Archetype }
+  | { kind: "clarify"; question: string };
+
 /** Strip "1. ", "- ", "* " and blanks; the provider's free-text list → discrete hypotheses. */
 function parseHypotheses(text: string, max: number): string[] {
   const lines = text
@@ -71,6 +88,22 @@ function parseHypotheses(text: string, max: number): string[] {
  * pruned-branch learnings into later branches and the final result. Returns one result. */
 export class Coordinator {
   constructor(private readonly deps: CoordinatorDeps) {}
+
+  /** Route ONE task to an executor without fanning out: a preset archetype when the intent clearly matches
+   * one, a synthesized archetype for a novel task, or a single clarifying question when the task is too
+   * vague to act on. Deterministic keyword routing — ponytail ceiling: an LLM classifier is the upgrade
+   * path when the rules misroute. Mode routing is deferred to Phase 4 (see DispatchDecision). */
+  dispatch(task: string): DispatchDecision {
+    const words = task.trim().split(/\s+/).filter(Boolean);
+    if (words.length < 3) {
+      return { kind: "clarify", question: `"${task.trim()}" is too brief to route — tell me the goal and any target (file, repo, or topic).` };
+    }
+    const lower = task.toLowerCase();
+    for (const [re, name] of PRESET_RULES) {
+      if (re.test(lower)) return { kind: "archetype", archetype: ARCHETYPES[name]! };
+    }
+    return { kind: "synthesized", archetype: synthesizeArchetype(task, this.deps.parentRegistry) };
+  }
 
   async run(goal: string, opts: CoordinatorOptions = {}): Promise<OrchestrationResult> {
     const max = opts.maxBranches ?? 3;
