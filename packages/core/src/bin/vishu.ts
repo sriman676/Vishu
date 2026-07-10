@@ -33,6 +33,7 @@ import { IdentityProfile } from "../personalization/profile.js";
 import { registerEvolve, registerProfile, registerTwin } from "../personalization/rpc.js";
 import { registerOrchestrationTools } from "../orchestration/tools.js";
 import { AgentFactory } from "../orchestration/factory.js";
+import { ModeManager, registerModeTools } from "../orchestration/modes.js";
 import { buildRoles } from "../orchestration/roles.js";
 import { registerReasoning } from "../reasoning/rpc.js";
 import { registerReasoningTools } from "../reasoning/tools.js";
@@ -191,6 +192,11 @@ async function serve(): Promise<number> {
   // become routable by the `dispatch` tool (Phase 1 Step 5 loop closure).
   const factory = new AgentFactory(tools, skills, { ask, audit, storePath: join(config.paths.workspaceDir, "agents.json") });
   registerOrchestrationTools(tools, { roles, model: config.provider.model, factory });
+  // F12 personas/modes: one ModeManager sharing the runtime ask/audit gate. mode_propose gates NEW modes
+  // (change_setting); approved ones persist to modes.json + hot-load. The active mode's prompt layers
+  // into the agent's system prompt (below), so a switch actually changes behaviour.
+  const modes = new ModeManager({ ask, audit, storePath: join(config.paths.workspaceDir, "modes.json") });
+  registerModeTools(tools, modes);
   // Boot invariants (UPGRADES §5): never come up ungated, unlogged, or unable to pause. Fail loud.
   assertBoot(selfCheck({ gateWired: Boolean(ask) }), (s) => process.stdout.write(s));
   const agentService = new AgentService({
@@ -202,6 +208,7 @@ async function serve(): Promise<number> {
     runLog: new RunLog(),
     twin,
     profile,
+    mode: modes,
     ask,
     audit,
     rememberFile,
@@ -217,7 +224,7 @@ async function serve(): Promise<number> {
     const terminal = new Terminal(config.paths.actionDir);
     try {
       const svc = new AgentService(
-        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile, ask, audit, rememberFile, sendCapFile, sendCap },
+        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile, mode: modes, ask, audit, rememberFile, sendCapFile, sendCap },
         sessions,
       );
       return await svc.startTurn(sid, msg);

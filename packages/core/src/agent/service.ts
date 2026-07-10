@@ -22,6 +22,9 @@ export interface AgentDeps {
   twin?: DigitalTwin;
   /** Cross-session identity profile: its notes load into the system prompt of each new session. */
   profile?: IdentityProfile;
+  /** Active persona/mode (F12): its system prompt layers over the base so a mode switch actually
+   * changes behaviour. Absent → the plain base persona. */
+  mode?: { active(): { system: string } };
   /** How autonomously to act (default ask_every_time — the safe default). */
   autonomy?: Autonomy;
   /** How to ask the human for approval. Absent → deny gated actions (fail-closed: no UI = no unattended send/spend). */
@@ -66,8 +69,10 @@ export class AgentService {
 
   /** Base system prompt plus the user's identity profile (when non-empty) so the agent "knows you". */
   private systemPrompt(): string {
+    const mode = this.deps.mode?.active().system;
+    const base = mode ? `${SYSTEM}\n\n${mode}` : SYSTEM;
     const profile = this.deps.profile?.render();
-    return profile ? `${SYSTEM}\n\n${profile}` : SYSTEM;
+    return profile ? `${base}\n\n${profile}` : base;
   }
 
   async startTurn(sessionId: string | undefined, message: string, model?: string): Promise<TurnResult> {
