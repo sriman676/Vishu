@@ -8,6 +8,7 @@ import { Router } from "../providers/router.js";
 import { makePolicy } from "../security/policy.js";
 import { registerBuiltins } from "../tools/builtins.js";
 import { ToolRegistry } from "../tools/registry.js";
+import type { Tool } from "../tools/types.js";
 import { ARCHETYPES, narrowRegistry, narrowTier } from "./archetypes.js";
 import { council, mixtureOfAgents } from "./council.js";
 import { Coordinator } from "./coordinator.js";
@@ -169,4 +170,39 @@ test("harvest: the winning branch's work is merged back into the action repo", a
   });
   assert.equal(outcome.merged, true);
   assert.equal(readFileSync(join(repoDir, "artifact.txt"), "utf8"), "winner"); // merged into the repo
+});
+
+test("subagent honours an `ask`: a send-class tool runs only when approval says yes (UPGRADES §4)", async () => {
+  let ran = false;
+  const sender: Tool = {
+    name: "fake_send",
+    description: "test send",
+    parameters: { type: "object", properties: {} },
+    meta: { action: "send" }, // NEVER_WITHOUT_ASKING → always routes through the gate
+    async run() { ran = true; return "SENT"; },
+  };
+  const archetype = { name: "sender", system: "you send", tools: ["fake_send"] };
+  const run = (ask?: (r: unknown) => Promise<boolean>) => {
+    ran = false;
+    const parent = new ToolRegistry();
+    parent.register(sender);
+    // turn 1: call fake_send; turn 2: finish.
+    const router = new Router([new ScriptedProvider([
+      { content: "", toolCalls: [{ id: "1", name: "fake_send", arguments: {} }], finish: "tool_calls" },
+      { content: "done", finish: "stop" },
+    ])]);
+    return runSubagent({
+      archetype, task: "send it", parentContext: "ctx",
+      parentPolicy: makePolicy("full", mkdtempSync(join(tmpdir(), "vishu-ask-"))),
+      parentRegistry: parent, router, model: "mock",
+      repoDir: mkdtempSync(join(tmpdir(), "vishu-ask-")),
+      ask: ask as never,
+    });
+  };
+
+  await run(async () => true);
+  assert.equal(ran, true, "approved send should execute");
+
+  await run(); // no ask → fail-closed deny
+  assert.equal(ran, false, "unapproved send must be denied");
 });

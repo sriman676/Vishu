@@ -1,4 +1,5 @@
 import type { Router } from "../providers/router.js";
+import type { AskFn } from "../reliability/approvals.js";
 import type { RunLog } from "../reliability/runlog.js";
 import type { SecurityPolicy } from "../security/policy.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -15,6 +16,9 @@ export interface CoordinatorDeps {
   parentRegistry: ToolRegistry;
   repoDir: string;
   runLog?: RunLog;
+  /** Approve subagents' gated actions (UPGRADES §4). Absent → deny-only (fail-closed): a supervised
+   * orchestration can pass a real ask so a subagent requests approval instead of only being blocked. */
+  ask?: AskFn;
 }
 
 export interface CoordinatorOptions {
@@ -95,6 +99,7 @@ export class Coordinator {
       model: this.deps.model,
       repoDir: this.deps.repoDir,
       runLog: this.deps.runLog,
+      ask: this.deps.ask,
       harvest,
       keepWorktree,
       validate: opts.validate
