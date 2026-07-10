@@ -1,6 +1,6 @@
 import type { Router } from "../providers/router.js";
 import type { ChatMessage, ToolCall } from "../providers/types.js";
-import type { ApprovalDecision } from "../reliability/approvals.js";
+import type { ApprovalDecision, AskFn } from "../reliability/approvals.js";
 import { estimateTokens, type Budget } from "../reliability/budget.js";
 import type { RunLog } from "../reliability/runlog.js";
 import type { SecurityPolicy } from "../security/policy.js";
@@ -25,6 +25,9 @@ export interface ToolLoopDeps {
   budget?: Budget;
   /** Risk-scoped approval gate; absent = auto-allow all. */
   approve?: (call: ToolCall) => Promise<ApprovalDecision>;
+  /** Raw human approval channel, passed to delegating tools (dispatch/orchestrate) via ToolContext so
+   * their subagents can request approval rather than only deny. Separate from `approve` (the gate). */
+  ask?: AskFn;
   /** Compact the transcript before each provider call (default true). */
   compact?: boolean;
 }
@@ -61,7 +64,7 @@ export async function runToolLoop(
 
       let output: string;
       try {
-        output = await deps.registry.get(call.name).run(call.arguments, { policy: deps.policy, terminal: deps.terminal });
+        output = await deps.registry.get(call.name).run(call.arguments, { policy: deps.policy, terminal: deps.terminal, ask: deps.ask });
       } catch (e) {
         // ponytail: tool failure feeds back as an error message so the model can recover (fault isolation).
         output = `error: ${e instanceof Error ? e.message : String(e)}`;

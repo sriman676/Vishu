@@ -18,6 +18,7 @@ export function registerOrchestrationTools(registry: ToolRegistry, deps: { roles
       parentRegistry: registry,
       repoDir: ctx.policy.actionDir,
       factory: deps.factory,
+      ask: ctx.ask, // a dispatched/orchestrated subagent can now request approval, not just deny
     });
 
   registry.register({

@@ -110,7 +110,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentOutcom
     // clean retry before it propagates to the outer catch (worktree cleanup + throw).
     const runLoop = () =>
       runToolLoop(
-        { router: opts.router, registry, policy, terminal, model: opts.model, runLog: opts.runLog, approve: (c) => gate.decide(c) },
+        { router: opts.router, registry, policy, terminal, model: opts.model, runLog: opts.runLog, approve: (c) => gate.decide(c), ask: opts.ask },
         baseMessages.map((m) => ({ ...m })),
         opts.maxIterations ?? 6,
       );

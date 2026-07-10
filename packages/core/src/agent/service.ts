@@ -83,6 +83,7 @@ export class AgentService {
         model: model ?? this.deps.model, // per-turn model override (UI model switcher); ignored under a pool
         runLog: this.deps.runLog,
         approve: (call) => this.gate.decide(call), // F0 gate — every tool call passes through here
+        ask: this.deps.ask, // handed to delegating tools (dispatch) so their subagents can request approval
       },
       session.messages,
     );
