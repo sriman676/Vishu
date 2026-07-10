@@ -13,7 +13,7 @@ export function registerOrchestrationTools(registry: ToolRegistry, deps: { roles
   const coordinator = (ctx: ToolContext) =>
     new Coordinator({
       router: deps.roles.for("builder"),
-      model: deps.model,
+      model: deps.roles.modelFor("builder") ?? deps.model, // the builder role's pinned model (e.g. large NIM)
       parentPolicy: ctx.policy,
       parentRegistry: registry,
       repoDir: ctx.policy.actionDir,

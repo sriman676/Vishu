@@ -8,7 +8,7 @@ import { buildApp } from "../appbuilder/build.js";
 import { formatFindings } from "../appbuilder/security.js";
 import { type AppSpec, type InterviewTurn, interviewStep, persistSpec, specToMarkdown } from "../appbuilder/spec.js";
 import { AgentService } from "../agent/service.js";
-import { loadConfig, providerPresets } from "../config/config.js";
+import { loadConfig, providerPresets, resolveBuilderModel } from "../config/config.js";
 import { ok as okRpc } from "../transport/rpc.js";
 import { registerAutomation, registerAutofix } from "../automation/rpc.js";
 import { SchedulerGate } from "../automation/gate.js";
@@ -144,8 +144,12 @@ async function serve(): Promise<number> {
   const pooled = Object.keys(config.providers).length > 0;
   const router = pooled ? buildPoolRouter(config.providers, usage, cassette) : buildRouter(config.provider, usage, cassette);
   if (pooled) process.stdout.write(`[pool] ${Object.keys(config.providers).join(" + ")} (mode: ${process.env.VISHU_KEY_MODE || "failover"})\n`);
-  const roles = buildRoles(router, config.providers, config.roles, usage);
-  if (roles.roles().length) process.stdout.write(`[roles] ${roles.roles().map((r) => `${r}→${config.roles[r]}`).join(", ")}\n`);
+  const roles = buildRoles(router, config.provider.model, config.providers, config.roles, usage);
+  // Expert/"builder" work runs on the largest NIM model (decision 2026-07-10). A dedicated builder
+  // provider (config.roles.builder) keeps its own model unless JARVIS_BUILDER_MODEL overrides.
+  const builderModel = resolveBuilderModel(process.env, config.provider);
+  if (process.env.JARVIS_BUILDER_MODEL || !config.roles.builder) roles.assign("builder", roles.for("builder"), builderModel);
+  if (roles.roles().length) process.stdout.write(`[roles] ${roles.roles().map((r) => `${r}→${config.roles[r] ?? "default"}@${roles.modelFor(r)}`).join(", ")}\n`);
   const memory = new MemoryStore(
     config.paths.vaultDir,
     config.paths.memoryDbFile,
@@ -340,7 +344,7 @@ async function build(goal: string): Promise<number> {
   const config = loadConfig();
   mkdirSync(config.paths.actionDir, { recursive: true });
   const router = buildRouter(config.provider, usageLog(config));
-  const model = config.provider.model;
+  const model = resolveBuilderModel(process.env, config.provider); // expert build runs on the builder model
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     const turns: InterviewTurn[] = [];
