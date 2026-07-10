@@ -19,6 +19,7 @@ import { WorkflowStore } from "../automation/workflows.js";
 import { registerConnectors } from "../connectors/rpc.js";
 import { LocalConnector } from "../connectors/local.js";
 import { McpClient, type McpSampler, registerMcpTools } from "../connectors/mcp.js";
+import { DomainManager, loadDomains } from "../connectors/domains.js";
 import { WebhookConnector } from "../connectors/webhook.js";
 import type { Connector } from "../connectors/types.js";
 import { registerMemory } from "../memory/rpc.js";
@@ -246,6 +247,12 @@ async function serve(): Promise<number> {
   };
   await connectMcpServers(tools, bus, sampler);
 
+  // Phase 1 Step 3: attach external domain services (JobAutomation, …) from jarvis.domains.json as
+  // namespaced `<id>__*` tool sets, each domain's declared action classes reaching the F0 gate.
+  const domainsFile = process.env.VISHU_DOMAINS_FILE || join(process.cwd(), "jarvis.domains.json");
+  const domainTools = await new DomainManager(loadDomains(domainsFile), tools, { bus, sampler }).start();
+  if (domainTools.length) process.stdout.write(`[domains] ${domainTools.length} tool(s): ${domainTools.join(", ")}\n`);
+
   // Phase 12: optional modules — off by default, enabled by VISHU_MODULES; core is unaffected when off.
   const modulesOn = await loadModules(MODULES, { tools, rpc: registry, bus, workspaceDir: config.paths.workspaceDir });
   if (modulesOn.length) process.stdout.write(`[modules] enabled: ${modulesOn.join(", ")}\n`);
@@ -466,6 +473,7 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   if (cmd === "serve") return serve();
+  if (cmd === "jarvis") return serve(); // the full PA runtime: serve + domain services from jarvis.domains.json
   if (cmd === "chat") {
     const text = argv.slice(1).join(" ");
     if (!text) return usageErr("vishu chat <message>");
@@ -497,6 +505,7 @@ async function main(argv: string[]): Promise<number> {
       "  vishu --version              print version",
       "  vishu config                 print resolved config + paths",
       "  vishu serve                  start the JSON-RPC core (loopback)",
+      "  vishu jarvis                 start the full PA runtime (serve + domain services)",
       "  vishu chat <message>         one-shot chat via the configured provider",
       "  vishu agent <task>           run the tool loop (build/run inside action_dir)",
       "  vishu build <what>           guided secure app builder: spec interview → build → pentest",
