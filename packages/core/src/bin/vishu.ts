@@ -47,6 +47,7 @@ import { loadSweBenchLite, runSweBench } from "../eval/swebench.js";
 import { buildPoolRouter, buildRouter } from "../providers/factory.js";
 import { RunLog } from "../reliability/runlog.js";
 import { makeAsk, terminalPrompt } from "../reliability/ask.js";
+import { AuditLog } from "../security/audit.js";
 import { isPaused, pause, pauseFile, resume } from "../automation/pause.js";
 import { makePolicy } from "../security/policy.js";
 import { SkillIndex } from "../skills/index.js";
@@ -173,6 +174,8 @@ async function serve(): Promise<number> {
   // F0 approval channel: one terminal y/N prompt per gated action, shared across every turn so prompts
   // serialize on one stdin. No TTY (detached) → denies, keeping the fail-closed guarantee for send/spend/delete.
   const ask = makeAsk(terminalPrompt);
+  // Durable append-only decision log — every gate verdict lands here across runs (UPGRADES §2).
+  const audit = new AuditLog();
   const agentService = new AgentService({
     router,
     tools,
@@ -183,6 +186,7 @@ async function serve(): Promise<number> {
     twin,
     profile,
     ask,
+    audit,
   }, sessions);
   registerAgent(registry, agentService);
 
@@ -193,7 +197,7 @@ async function serve(): Promise<number> {
     const terminal = new Terminal(config.paths.actionDir);
     try {
       const svc = new AgentService(
-        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile, ask },
+        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile, ask, audit },
         sessions,
       );
       return await svc.startTurn(sid, msg);

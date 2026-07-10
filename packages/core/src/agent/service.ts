@@ -2,6 +2,7 @@ import type { Router } from "../providers/router.js";
 import type { ChatMessage } from "../providers/types.js";
 import { ApprovalGate, type AskFn, type Autonomy } from "../reliability/approvals.js";
 import type { RunLog } from "../reliability/runlog.js";
+import type { AuditLog } from "../security/audit.js";
 import type { SecurityPolicy } from "../security/policy.js";
 import type { IdentityProfile } from "../personalization/profile.js";
 import type { DigitalTwin } from "../personalization/twin.js";
@@ -25,6 +26,8 @@ export interface AgentDeps {
   autonomy?: Autonomy;
   /** How to ask the human for approval. Absent → deny gated actions (fail-closed: no UI = no unattended send/spend). */
   ask?: AskFn;
+  /** Append-only decision log (UPGRADES §2). Absent → gate decisions aren't persisted. */
+  audit?: AuditLog;
 }
 
 export interface TurnResult {
@@ -48,6 +51,7 @@ export class AgentService {
     // and honours the global pause flag file by default.
     this.gate = new ApprovalGate(deps.autonomy ?? "ask_every_time", deps.ask ?? (async () => false), {
       actionOf: (name) => deps.tools.getAction(name),
+      audit: deps.audit,
     });
   }
 

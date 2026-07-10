@@ -1,6 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { assertWritable, decideCommand, decideEgress, jailPath, SecurityError } from "../security/policy.js";
+import { AuditLog } from "../security/audit.js";
 import { guardInjection } from "../security/injection.js";
 import { htmlToMarkdown } from "../tokenjuice/html.js";
 import { compressShellOutput } from "../tokenjuice/shellfilter.js";
@@ -75,6 +76,18 @@ const runShell: Tool = {
   },
 };
 
+// ponytail: module-level audit sink for read-class egress; injectable if the tools ever need per-run scoping.
+const egressAudit = new AuditLog();
+
+/** Phase 1.4/§2: warn + durably log a non-allowlisted outbound host (read-class egress stays warn-only,
+ * not blocked — research must flow). Returns the banner to prepend to the tool result. */
+function egressWarn(tool: string, url: string): string {
+  const eg = decideEgress(url);
+  if (eg.allowlisted) return "";
+  egressAudit.record({ kind: "egress", tool, host: eg.host || url, verdict: "warn", reason: eg.reason ?? "not on allowlist" });
+  return `[egress] outbound to non-allowlisted host "${eg.host || url}" (${eg.reason ?? "not on allowlist"})\n`;
+}
+
 const webFetch: Tool = {
   name: "web_fetch",
   description: "Fetch a URL and return its body text.",
@@ -82,8 +95,7 @@ const webFetch: Tool = {
   parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
   async run(args) {
     const url = str(args.url, "url");
-    const eg = decideEgress(url); // Phase 1.4: log non-allowlisted egress, don't block (research is legit).
-    const warn = eg.allowlisted ? "" : `[egress] outbound to non-allowlisted host "${eg.host || url}" (${eg.reason ?? "not on allowlist"})\n`;
+    const warn = egressWarn("web_fetch", url);
     const res = await fetch(url);
     const body = await res.text();
     if (guardInjection(body) === "block") return `${warn}[web_fetch] content blocked by injection guard`;
@@ -100,8 +112,10 @@ const webSearch: Tool = {
   async run(args) {
     const base = process.env.VISHU_SEARCH_URL;
     if (!base) return "[web_search] not configured (set VISHU_SEARCH_URL)"; // ponytail: BYO endpoint
-    const res = await fetch(`${base}${encodeURIComponent(str(args.query, "query"))}`);
-    return clip(await res.text());
+    const url = `${base}${encodeURIComponent(str(args.query, "query"))}`;
+    const warn = egressWarn("web_search", url); // §2b: the operator-set search host is egress-checked too
+    const res = await fetch(url);
+    return warn + clip(await res.text());
   },
 };
 

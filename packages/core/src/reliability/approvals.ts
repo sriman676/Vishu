@@ -1,6 +1,7 @@
 import type { ToolCall } from "../providers/types.js";
 import { isPaused as defaultIsPaused } from "../automation/pause.js";
 import { type ActionClass, classifyTool, NEVER_WITHOUT_ASKING } from "../security/actions.js";
+import type { AuditLog } from "../security/audit.js";
 import { classifyCommand, type CommandClass } from "../security/classify.js";
 
 export type Autonomy = "ask_every_time" | "ask_once" | "automatic";
@@ -24,6 +25,8 @@ export interface ApprovalOpts {
   actionOf?: (name: string) => ActionClass;
   /** Is the global pause engaged? (default: the flag-file check). Injected for tests. */
   isPaused?: () => boolean;
+  /** Append-only decision log (UPGRADES §2). Absent → decisions aren't persisted. */
+  audit?: AuditLog;
 }
 
 // Pausing must work even while paused, so the pause controls themselves are never pause-denied.
@@ -37,6 +40,7 @@ export class ApprovalGate {
   private readonly remembered = new Map<string, boolean>();
   private readonly actionOf: (name: string) => ActionClass;
   private readonly isPaused: () => boolean;
+  private readonly audit?: AuditLog;
   constructor(
     private readonly autonomy: Autonomy,
     private readonly ask: AskFn,
@@ -44,10 +48,17 @@ export class ApprovalGate {
   ) {
     this.actionOf = opts.actionOf ?? classifyTool;
     this.isPaused = opts.isPaused ?? defaultIsPaused;
+    this.audit = opts.audit;
   }
 
   async decide(call: ToolCall): Promise<ApprovalDecision> {
     const action = this.actionOf(call.name);
+    const decision = await this.evaluate(call, action);
+    this.audit?.record({ kind: "gate", tool: call.name, action, verdict: decision.allowed ? "allow" : "deny", reason: decision.reason });
+    return decision;
+  }
+
+  private async evaluate(call: ToolCall, action: ActionClass): Promise<ApprovalDecision> {
     const klass = call.name === "run_shell" ? classifyCommand(String(call.arguments.command ?? "")) : "safe";
 
     // Global pause: deny everything with a side effect. Reads and the pause controls pass.
