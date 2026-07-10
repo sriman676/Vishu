@@ -13,6 +13,8 @@ export interface ApprovalRequest {
   summary: string;
   klass: CommandClass;
   action: ActionClass;
+  /** When set, the human must TYPE this exact phrase to confirm (stricter than y/N). Used for send/spend. */
+  confirm?: string;
 }
 
 export interface ApprovalDecision {
@@ -31,6 +33,10 @@ export interface ApprovalOpts {
   audit?: AuditLog;
   /** Persist ask_once remembers here so a remembered "yes" survives restart (UPGRADES §1). Absent → in-memory only. */
   rememberFile?: string;
+  /** Max send-class actions per day (UPGRADES §1 / PLAN F7 ≤30/day). Default 30. */
+  sendCap?: number;
+  /** Persist the daily send counter here so the cap survives restart. Absent → in-memory (per-process). */
+  sendCapFile?: string;
 }
 
 // Pausing must work even while paused, so the pause controls themselves are never pause-denied.
@@ -46,6 +52,10 @@ export class ApprovalGate {
   private readonly isPaused: () => boolean;
   private readonly audit?: AuditLog;
   private readonly rememberFile?: string;
+  private readonly sendCap: number;
+  private readonly sendCapFile?: string;
+  private sendMemDate = "";
+  private sendMemCount = 0;
   constructor(
     private readonly autonomy: Autonomy,
     private readonly ask: AskFn,
@@ -55,7 +65,41 @@ export class ApprovalGate {
     this.isPaused = opts.isPaused ?? defaultIsPaused;
     this.audit = opts.audit;
     this.rememberFile = opts.rememberFile;
+    this.sendCap = opts.sendCap ?? 30;
+    this.sendCapFile = opts.sendCapFile;
     this.loadRemembered();
+  }
+
+  private today(): string {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  /** How many send-class actions have already been approved today (resets at UTC midnight). */
+  private sendsToday(): number {
+    if (this.sendCapFile) {
+      try {
+        const c = JSON.parse(readFileSync(this.sendCapFile, "utf8")) as { date: string; count: number };
+        return c.date === this.today() ? c.count : 0;
+      } catch {
+        return 0;
+      }
+    }
+    return this.sendMemDate === this.today() ? this.sendMemCount : 0;
+  }
+
+  private recordSend(): void {
+    const next = this.sendsToday() + 1;
+    if (this.sendCapFile) {
+      try {
+        mkdirSync(dirname(this.sendCapFile), { recursive: true });
+        writeFileSync(this.sendCapFile, JSON.stringify({ date: this.today(), count: next }));
+      } catch {
+        /* best-effort — worst case the cap under-counts after a write failure */
+      }
+    } else {
+      this.sendMemDate = this.today();
+      this.sendMemCount = next;
+    }
   }
 
   /** Load persisted ask_once remembers (best-effort — a missing/corrupt file just starts empty). */
@@ -96,7 +140,14 @@ export class ApprovalGate {
 
     // Hard floor: irreversible/outbound classes are always confirmed, per-call, regardless of autonomy.
     if (NEVER_WITHOUT_ASKING.has(action)) {
-      const ok = await this.ask({ tool: call.name, summary: summarize(call), klass, action });
+      // Daily send cap (PLAN F7 ≤30/day) — deny before even prompting once the day's quota is spent.
+      if (action === "send" && this.sendsToday() >= this.sendCap) {
+        return { allowed: false, reason: `daily send cap reached (${this.sendCap}/day)` };
+      }
+      // send/spend demand a TYPED phrase, not a bare y/N — a stricter, deliberate confirmation.
+      const confirm = action === "send" || action === "spend" ? action.toUpperCase() : undefined;
+      const ok = await this.ask({ tool: call.name, summary: summarize(call), klass, action, confirm });
+      if (ok && action === "send") this.recordSend();
       return { allowed: ok, reason: ok ? undefined : "user denied" };
     }
 

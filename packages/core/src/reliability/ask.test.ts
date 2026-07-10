@@ -18,6 +18,13 @@ test("makeAsk: y/yes allow, everything else denies", async () => {
   for (const no of ["n", "", "nope", "yeah", "1"]) assert.equal(await answer(no), false, JSON.stringify(no));
 });
 
+test("makeAsk: a confirm phrase requires the exact typed word, not y/N", async () => {
+  const sendReq: ApprovalRequest = { ...req, confirm: "SEND" };
+  const answer = (s: string) => makeAsk(async () => s, () => true)(sendReq);
+  for (const yes of ["SEND", "send", " Send "]) assert.equal(await answer(yes), true, yes);
+  for (const no of ["y", "yes", "SND", "", "confirm"]) assert.equal(await answer(no), false, JSON.stringify(no));
+});
+
 test("makeAsk: serializes — the second prompt waits for the first to resolve", async () => {
   const order: string[] = [];
   let releaseFirst!: () => void;

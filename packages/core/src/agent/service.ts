@@ -30,6 +30,10 @@ export interface AgentDeps {
   audit?: AuditLog;
   /** Persist ask_once remembers here so they survive restart (UPGRADES §1). Absent → in-memory only. */
   rememberFile?: string;
+  /** Persist the daily send counter here so the ≤N/day cap survives restart (UPGRADES §1 / F7). */
+  sendCapFile?: string;
+  /** Max send-class actions per day (default 30). */
+  sendCap?: number;
 }
 
 export interface TurnResult {
@@ -55,6 +59,8 @@ export class AgentService {
       actionOf: (name) => deps.tools.getAction(name),
       audit: deps.audit,
       rememberFile: deps.rememberFile,
+      sendCapFile: deps.sendCapFile,
+      sendCap: deps.sendCap,
     });
   }
 

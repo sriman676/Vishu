@@ -10,7 +10,15 @@ function isYes(answer: string): boolean {
 }
 
 function line(req: ApprovalRequest): string {
+  if (req.confirm) {
+    return `\n[approve] ${req.tool} · ${req.action} · ${req.summary}\n  type "${req.confirm}" to confirm (anything else cancels): `;
+  }
   return `\n[approve] ${req.tool} · ${req.action} · ${req.summary}\n  allow? [y/N] `;
+}
+
+/** send/spend need the exact typed phrase; everything else accepts y/yes. */
+function accepted(req: ApprovalRequest, answer: string): boolean {
+  return req.confirm ? answer.trim().toLowerCase() === req.confirm.toLowerCase() : isYes(answer);
 }
 
 /**
@@ -21,7 +29,7 @@ function line(req: ApprovalRequest): string {
 export function makeAsk(prompt: Prompt, attended: () => boolean = () => Boolean(process.stdin.isTTY)): AskFn {
   let chain: Promise<unknown> = Promise.resolve();
   return (req) => {
-    const ask = async () => (attended() ? isYes(await prompt(line(req))) : false);
+    const ask = async () => (attended() ? accepted(req, await prompt(line(req))) : false);
     const result = chain.then(ask, ask);
     chain = result.catch(() => {});
     return result;

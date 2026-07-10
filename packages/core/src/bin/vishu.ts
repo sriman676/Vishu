@@ -179,6 +179,9 @@ async function serve(): Promise<number> {
   const audit = new AuditLog();
   // ask_once remembers persist here so a remembered "yes" survives restart (UPGRADES §1).
   const rememberFile = join(config.paths.workspaceDir, "approvals.json");
+  // Daily send-cap counter (PLAN F7 ≤30/day; VISHU_SEND_CAP overrides), persisted across restarts.
+  const sendCapFile = join(config.paths.workspaceDir, "send-count.json");
+  const sendCap = Number(process.env.VISHU_SEND_CAP) || 30;
   // Boot invariants (UPGRADES §5): never come up ungated, unlogged, or unable to pause. Fail loud.
   assertBoot(selfCheck({ gateWired: Boolean(ask) }), (s) => process.stdout.write(s));
   const agentService = new AgentService({
@@ -193,6 +196,8 @@ async function serve(): Promise<number> {
     ask,
     audit,
     rememberFile,
+    sendCapFile,
+    sendCap,
   }, sessions);
   registerAgent(registry, agentService);
 
@@ -203,7 +208,7 @@ async function serve(): Promise<number> {
     const terminal = new Terminal(config.paths.actionDir);
     try {
       const svc = new AgentService(
-        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile, ask, audit, rememberFile },
+        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile, ask, audit, rememberFile, sendCapFile, sendCap },
         sessions,
       );
       return await svc.startTurn(sid, msg);

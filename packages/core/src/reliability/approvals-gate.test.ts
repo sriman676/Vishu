@@ -50,6 +50,35 @@ test("ask_once remembers persist across gate instances / restarts (UPGRADES §1)
   assert.equal(b.n, 0, "never asked — the remember survived the restart");
 });
 
+test("send-class carries a typed-confirm phrase; spend too, other classes stay y/N (UPGRADES §1)", async () => {
+  const seen: Record<string, string | undefined> = {};
+  const gate = new ApprovalGate("automatic", async (r) => (seen[r.action] = r.confirm, true), {
+    actionOf: actionOf({ outreach_send: "send", pay: "spend", del: "delete" }),
+    isPaused: () => false,
+  });
+  await gate.decide(call("outreach_send"));
+  await gate.decide(call("pay"));
+  await gate.decide(call("del"));
+  assert.equal(seen.send, "SEND");
+  assert.equal(seen.spend, "SPEND");
+  assert.equal(seen.delete, undefined); // delete is still a plain y/N confirm
+});
+
+test("daily send cap: denies once the day's quota is spent, without prompting (UPGRADES §1 / F7)", async () => {
+  let asks = 0;
+  const gate = new ApprovalGate("automatic", async () => (asks++, true), {
+    actionOf: actionOf({ outreach_send: "send" }),
+    isPaused: () => false,
+    sendCap: 2,
+  });
+  assert.equal((await gate.decide(call("outreach_send"))).allowed, true);
+  assert.equal((await gate.decide(call("outreach_send"))).allowed, true);
+  const third = await gate.decide(call("outreach_send"));
+  assert.equal(third.allowed, false);
+  assert.match(third.reason ?? "", /daily send cap/);
+  assert.equal(asks, 2, "the capped call is denied before the human is even prompted");
+});
+
 test("reads still auto-allow under automatic", async () => {
   const gate = new ApprovalGate("automatic", async () => false, {
     actionOf: actionOf({ read_file: "read" }),
