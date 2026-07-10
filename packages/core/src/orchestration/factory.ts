@@ -24,6 +24,9 @@ const CAP_TOOLS: Record<string, string> = {
 
 export interface AgentProposal {
   name: string;
+  /** The task this agent was built for — stored on the agent so `dispatch` can route a task that
+   * DESCRIBES the job (not just one that names the agent) to it (routing recall). */
+  task: string;
   /** Drafted system prompt — cites the relevant skills and forbids agent-to-agent chaining. */
   system: string;
   /** Tools it MAY use now — always ⊆ parent (least privilege, from synthesizeArchetype). */
@@ -55,7 +58,7 @@ export function proposeAgent(name: string, task: string, parent: ToolRegistry, s
     `Do NOT orchestrate or spawn other agents. Any side-effecting action must pass the approval gate.`,
   ].join("\n");
 
-  return { name, system, tools, toolWishlist, citedSkills };
+  return { name, task, system, tools, toolWishlist, citedSkills };
 }
 
 /** The Trillion-style agent factory: propose a bespoke agent, gate its registration behind the F0
@@ -69,6 +72,8 @@ export function proposeAgent(name: string, task: string, parent: ToolRegistry, s
 export interface RegisteredAgent extends Archetype {
   /** Caps the cited skills implied but the parent lacked — surfaced by `list`, fulfilled by `grantTool`. */
   wishlist?: string[];
+  /** The task the agent was built for — drives `dispatch` routing recall (describe-not-name). */
+  task?: string;
 }
 
 export class AgentFactory {
@@ -92,12 +97,14 @@ export class AgentFactory {
   /** Gate registration behind F0. Approved → the agent is live immediately (hot) and persisted.
    * Denied / no ask wired → not registered, so no agent is ever created silently. */
   async approveAndRegister(p: AgentProposal): Promise<{ registered: boolean; archetype?: Archetype; reason?: string }> {
+    // No silent overwrite: replacing (or widening) an existing agent must be deliberate — revoke first.
+    if (this.approved.has(p.name)) return { registered: false, reason: `agent "${p.name}" already exists — revoke_agent first to replace it` };
     const decision = await this.gate.decide({ id: `agent-${p.name}`, name: "register_agent", arguments: { name: p.name, tools: p.tools, wishlist: p.toolWishlist } });
     if (!decision.allowed) {
       this.opts.runLog?.log("agent_register_denied", `${p.name}: ${decision.reason ?? "denied"}`);
       return { registered: false, reason: decision.reason };
     }
-    const archetype: RegisteredAgent = { name: p.name, system: p.system, tools: p.tools, wishlist: p.toolWishlist };
+    const archetype: RegisteredAgent = { name: p.name, system: p.system, tools: p.tools, wishlist: p.toolWishlist, task: p.task };
     this.approved.set(p.name, archetype);
     if (this.opts.storePath) this.persist(this.opts.storePath);
     this.opts.runLog?.log("agent_registered", p.name);
@@ -155,7 +162,7 @@ export class AgentFactory {
   private load(path: string): void {
     try {
       const arr = JSON.parse(readFileSync(path, "utf8")) as RegisteredAgent[];
-      for (const a of arr) if (a?.name) this.approved.set(a.name, { name: a.name, system: a.system, tools: a.tools, wishlist: a.wishlist });
+      for (const a of arr) if (a?.name) this.approved.set(a.name, { name: a.name, system: a.system, tools: a.tools, wishlist: a.wishlist, task: a.task });
     } catch {
       /* no store yet or unreadable — start empty */
     }

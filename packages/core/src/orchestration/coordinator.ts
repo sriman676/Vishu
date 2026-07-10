@@ -103,13 +103,29 @@ export class Coordinator {
       return { kind: "clarify", question: `"${task.trim()}" is too brief to route — tell me the goal and any target (file, repo, or topic).` };
     }
     const lower = task.toLowerCase();
-    // A user-approved bespoke agent, named in the task, wins over generic presets — deliberately-built
-    // agents beat keyword defaults. Name matched as a whole word (escaped, so any name is literal).
-    const custom = this.deps.factory?.agents().find((a) => new RegExp(`\\b${a.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(lower));
-    if (custom) return { kind: "archetype", archetype: custom };
+    const agents = this.deps.factory?.agents() ?? [];
+    // 1. A bespoke agent NAMED in the task wins outright — deliberately-built beats keyword defaults.
+    //    Name matched as a whole word (escaped, so any name is literal).
+    const named = agents.find((a) => new RegExp(`\\b${a.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(lower));
+    if (named) return { kind: "archetype", archetype: named };
+    // 2. Generic intent → a preset role (coder/critic/researcher/planner).
     for (const [re, name] of PRESET_RULES) {
       if (re.test(lower)) return { kind: "archetype", archetype: ARCHETYPES[name]! };
     }
+    // 3. Routing recall: a task that DESCRIBES an existing agent's job (≥2 shared significant words with
+    //    the task it was built for) reuses that agent instead of synthesizing a new one. Runs only after
+    //    presets, so fuzzy overlap never hijacks a clear generic intent. Ceiling: an LLM classifier.
+    const sig = (s: string) => new Set(s.toLowerCase().split(/\W+/).filter((w) => w.length >= 5));
+    const taskSig = sig(task);
+    let best: Archetype | undefined;
+    let bestOverlap = 1; // strictly greater ⇒ require ≥2 shared significant words
+    for (const a of agents) {
+      if (!a.task) continue;
+      const overlap = [...sig(a.task)].filter((w) => taskSig.has(w)).length;
+      if (overlap > bestOverlap) [best, bestOverlap] = [a, overlap];
+    }
+    if (best) return { kind: "archetype", archetype: best };
+    // 4. Genuinely novel → a synthesized bespoke archetype (tools ⊆ parent).
     return { kind: "synthesized", archetype: synthesizeArchetype(task, this.deps.parentRegistry) };
   }
 

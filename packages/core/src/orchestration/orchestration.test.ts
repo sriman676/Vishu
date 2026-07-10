@@ -146,9 +146,13 @@ test("dispatch: a factory-approved agent named in the task is routed to, ahead o
   assert.equal(named.kind, "archetype");
   assert.equal(named.kind === "archetype" && named.archetype.name, "telugu-translator", "approved agent wins over any preset");
 
-  // A task that doesn't name the agent still routes by the normal rules (no hijack).
-  const unrelated = coordinator.dispatch("translate this telugu paragraph into english");
-  assert.equal(unrelated.kind, "synthesized");
+  // Routing recall: a task that DESCRIBES the agent's job (without naming it) reaches it too.
+  const described = coordinator.dispatch("translate this telugu paragraph into english");
+  assert.equal(described.kind === "archetype" && described.archetype.name, "telugu-translator", "describe-not-name still routes to the bespoke agent");
+
+  // A task with no overlap is NOT hijacked — it synthesizes a fresh agent.
+  const novel = coordinator.dispatch("compose a haiku about the ocean at dawn");
+  assert.equal(novel.kind, "synthesized");
 
   // dispatchAndRun on a too-vague task returns the clarifying question without executing anything.
   assert.match(await coordinator.dispatchAndRun("do it"), /too brief/);

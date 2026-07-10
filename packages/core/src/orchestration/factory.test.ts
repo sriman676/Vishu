@@ -49,6 +49,15 @@ test("factory: approved agent is live immediately (hot) without restart", async 
   assert.equal(f.get("researcher-x")?.name, "researcher-x", "runnable at once, no reload");
 });
 
+test("factory: re-registering an existing name is rejected (no silent overwrite)", async () => {
+  const f = new AgentFactory(registerBuiltins(new ToolRegistry()), skillIndex(), { ask: async () => true });
+  await f.approveAndRegister(f.propose("dup", "search the web and summarize"));
+  const again = await f.approveAndRegister(f.propose("dup", "draft and send a cold email"));
+  assert.equal(again.registered, false);
+  assert.match(again.reason ?? "", /already exists/);
+  assert.equal(f.agents().length, 1, "the original agent is untouched");
+});
+
 test("factory: revoke removes an approved agent (gated) and persists the removal", async () => {
   const storePath = join(mkdtempSync(join(tmpdir(), "vishu-rev-")), "agents.json");
   const f = new AgentFactory(registerBuiltins(new ToolRegistry()), skillIndex(), { ask: async () => true, storePath });
