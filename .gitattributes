@@ -1,0 +1,3 @@
+# Normalize all text to LF in the repo and on checkout (overrides core.autocrlf).
+# Stops the "LF will be replaced by CRLF" churn on Windows; keeps endings deterministic cross-platform.
+* text=auto eol=lf
