@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { SkillIndex } from "./index.js";
-import { auditCapabilities, GITHUB_CHECKS, neededCapabilities, planAcquisition } from "./acquire.js";
+import { acquireSkill, auditCapabilities, GITHUB_CHECKS, neededCapabilities, planAcquisition } from "./acquire.js";
 
 function indexWith(...skills: { name: string; description: string; cluster?: string }[]): SkillIndex {
   const dir = mkdtempSync(join(tmpdir(), "acq-skills-"));
@@ -33,6 +33,21 @@ test("auditCapabilities: present via skill or tool, missing otherwise", () => {
   assert.equal(audit.present.includes("reddit"), true); // matched the indexed skill
   assert.equal(audit.present.includes("browser"), true); // matched an installed tool
   assert.equal(audit.missing.includes("scrape"), true); // neither skill nor tool → gap
+});
+
+test("acquireSkill: indexes a local .md into the live index, rejects bad paths", () => {
+  const dir = mkdtempSync(join(tmpdir(), "acq-add-"));
+  const path = join(dir, "scraper.md");
+  writeFileSync(path, "---\nname: scraper\ndescription: scrape web pages\ncluster: web\n---\nbody");
+  const index = new SkillIndex();
+
+  assert.equal(index.search("scrape", 1).length, 0); // absent before
+  const res = acquireSkill(index, path);
+  assert.deepEqual(res, { name: "scraper", cluster: "web" });
+  assert.equal(index.search("scrape", 1).length, 1); // hot — searchable now
+
+  assert.throws(() => acquireSkill(index, join(dir, "nope.md")), /no such skill file/);
+  assert.throws(() => acquireSkill(index, join(dir, "readme.txt")), /not a Markdown skill/);
 });
 
 test("planAcquisition: one step per gap, GitHub install carries the required security checks", () => {

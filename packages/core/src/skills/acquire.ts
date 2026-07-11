@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { SkillIndex } from "./index.js";
 
@@ -77,6 +78,18 @@ export function planAcquisition(missing: string[]): AcquisitionStep[] {
   }));
 }
 
+/** CF3b install path 1 — the SAFE one: index a local Markdown SKILL.md into the LIVE index (hot, no
+ * restart). Instructions only: no code runs, nothing is fetched, so this needs no security analyzer (that
+ * gates the npm/pip + GitHub paths). Validates the path is an existing `.md` before parsing so a bad arg
+ * gives a clear error, not a raw ENOENT. Gating is the caller's F0 gate (the tool is `change_setting`). */
+export function acquireSkill(index: SkillIndex, path: string): { name: string; cluster: string } {
+  const p = path.trim();
+  if (!/\.md$/i.test(p)) throw new Error(`not a Markdown skill: "${p}" (expected a .md SKILL file)`);
+  if (!existsSync(p)) throw new Error(`no such skill file: "${p}"`);
+  const skill = index.add(p);
+  return { name: skill.name, cluster: skill.cluster };
+}
+
 /** Human-readable audit + plan for the `capability_audit` tool. */
 export function renderAudit(task: string, audit: CapabilityAudit): string {
   const lines = [
@@ -106,5 +119,23 @@ export function registerAcquireTools(registry: ToolRegistry, index: SkillIndex, 
       "Before a task, infer the skills/capabilities it needs, audit what's already available (skills + tools), and report the gaps with an acquisition plan. Read-only: never downloads or installs.",
     parameters: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
     run: async (args) => renderAudit(String(args.task ?? ""), auditCapabilities(String(args.task ?? ""), index, toolText())),
+  });
+
+  registry.register({
+    name: "acquire_skill",
+    // change_setting → the F0 gate always asks before a new skill enters the live index. Path 1 of the
+    // acquisition plan (local Markdown skill); npm/pip + GitHub install are later, security-gated paths.
+    meta: { action: "change_setting" },
+    description:
+      "Acquire capability path 1: index a local Markdown SKILL.md into the live skill library (no restart). Safe — instructions only, nothing runs or is downloaded. Registration is gated (asks first).",
+    parameters: { type: "object", properties: { path: { type: "string", description: "Path to a .md SKILL file." } }, required: ["path"] },
+    run: async (args) => {
+      try {
+        const { name, cluster } = acquireSkill(index, String(args.path ?? ""));
+        return `Acquired skill "${name}" (cluster: ${cluster}) — now searchable and invocable.`;
+      } catch (e) {
+        return `Not acquired: ${(e as Error).message}`;
+      }
+    },
   });
 }
