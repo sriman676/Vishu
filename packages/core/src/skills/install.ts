@@ -44,19 +44,21 @@ export function acquirePackage(manager: "npm" | "pip", name: string, run: CmdRun
 
 /** Path 3 — clone a GitHub repo shallowly into scratch, run the CF3c analyzer, and REFUSE if it finds a
  * blocker. A clean/warn-only repo is reported for the human's y/N (the install itself stays gated). */
-export function acquireRepo(url: string, run: CmdRunner = realRunner, analyze = analyzeRepo, dir = scratch("vishu-repo-")): { cloned: boolean; blocked: boolean; report: string } {
+export function acquireRepo(url: string, run: CmdRunner = realRunner, analyze = analyzeRepo, dir = scratch("vishu-repo-")): { cloned: boolean; blocked: boolean; dir: string; report: string } {
   const u = url.trim();
-  if (!GITHUB_URL.test(u)) return { cloned: false, blocked: true, report: `refused: not an https github.com repo URL: "${u}"` };
+  if (!GITHUB_URL.test(u)) return { cloned: false, blocked: true, dir, report: `refused: not an https github.com repo URL: "${u}"` };
 
   const clone = run("git", ["clone", "--depth", "1", u, dir], dir);
-  if (clone.code !== 0) return { cloned: false, blocked: true, report: `clone failed:\n${clone.out}` };
+  if (clone.code !== 0) return { cloned: false, blocked: true, dir, report: `clone failed:\n${clone.out}` };
 
   const res = analyze(dir);
-  return { cloned: true, blocked: res.blocked, report: `cloned to ${dir}\n\n${renderAnalysis(dir, res)}` };
+  return { cloned: true, blocked: res.blocked, dir, report: `cloned to ${dir}\n\n${renderAnalysis(dir, res)}` };
 }
 
-/** Expose paths 2 + 3 as gated tools (change_setting → the F0 gate asks first). */
-export function registerInstallTools(registry: ToolRegistry): void {
+/** Expose paths 2 + 3 as gated tools (change_setting → the F0 gate asks first). `advisor` is an optional
+ * advisory-only LLM pass (see `llmAdvisory`) appended to a clean repo report — it never changes the
+ * deterministic block verdict. */
+export function registerInstallTools(registry: ToolRegistry, advisor?: (dir: string) => Promise<string>): void {
   registry.register({
     name: "acquire_package",
     meta: { action: "change_setting" },
@@ -77,8 +79,18 @@ export function registerInstallTools(registry: ToolRegistry): void {
       "Acquire capability path 3: shallow-clone a GitHub repo into a scratch dir, run the security analyzer, and refuse on any blocker. Gated (asks first). A repo is inert until it passes AND you approve.",
     parameters: { type: "object", properties: { url: { type: "string", description: "https://github.com/owner/repo" } }, required: ["url"] },
     run: async (args) => {
-      const { blocked, report } = acquireRepo(String(args.url ?? ""));
-      return blocked ? `Install refused (security block):\n${report}` : report;
+      const res = acquireRepo(String(args.url ?? ""));
+      if (res.blocked) return `Install refused (security block):\n${res.report}`;
+      let report = res.report;
+      if (advisor && res.cloned) {
+        try {
+          const a = (await advisor(res.dir)).trim();
+          if (a) report += `\n\nAdvisory (LLM, non-blocking — does not change the verdict):\n${a}`;
+        } catch {
+          /* advisory is best-effort — a review failure never blocks or breaks the tool */
+        }
+      }
+      return report;
     },
   });
 }

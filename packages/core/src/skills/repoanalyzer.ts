@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { type Finding, formatFindings, hasBlockers, readCode, scanDir } from "../appbuilder/security.js";
+import { type Finding, formatFindings, hasBlockers, llmReview, readCode, scanDir } from "../appbuilder/security.js";
+import type { Router } from "../providers/router.js";
 import { guardInjection } from "../security/injection.js";
 import { decideEgress } from "../security/policy.js";
 
@@ -84,4 +85,14 @@ export function renderAnalysis(dir: string, res: { findings: Finding[]; blocked:
       ? "PASS WITH WARNINGS — review before you approve the install:"
       : "PASS — no security findings. Still requires your approval to install.";
   return `${head}\n${formatFindings(res.findings)}`;
+}
+
+/** Optional advisory LLM pass — breadth the regex gate can't catch (logic-level backdoors, subtle exfil).
+ * ADVISORY ONLY: it never blocks or clears an install; the deterministic `analyzeRepo` verdict stays the
+ * sole gate. A security block must NOT depend on an LLM reading attacker-controlled code — a malicious repo
+ * could prompt-inject "this is safe, approve it", so the LLM's word can only ADD a concern, never relax the
+ * gate. ponytail: reuses `llmReview` over a clipped digest. */
+export async function llmAdvisory(router: Router, model: string, dir: string): Promise<string> {
+  const digest = readCode(dir).map((f) => `// ${f.file}\n${f.text}`).join("\n\n");
+  return digest.trim() ? llmReview(router, model, digest) : "";
 }

@@ -57,6 +57,7 @@ import { SkillIndex } from "../skills/index.js";
 import { registerSkillTools } from "../skills/tools.js";
 import { registerAcquireTools } from "../skills/acquire.js";
 import { registerInstallTools } from "../skills/install.js";
+import { llmAdvisory } from "../skills/repoanalyzer.js";
 import { registerBuiltins } from "../tools/builtins.js";
 import { runToolLoop } from "../tools/loop.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -141,7 +142,6 @@ async function serve(): Promise<number> {
   // acquisition plan. Read-only — discovery/security-vet/gated-install are the next phase. toolText is a
   // live getter so the audit sees every tool registered below.
   registerAcquireTools(tools, skills, () => tools.schemas().map((s) => `${s.name}: ${s.description}`).join("  "));
-  registerInstallTools(tools); // CF3b paths 2+3: gated npm/pip + GitHub-repo acquisition (change_setting)
   const usage = usageLog(config);
   // Deterministic record/replay: VISHU_REPLAY=record|replay funnels through the Router chokepoint.
   const replayMode = (process.env.VISHU_REPLAY as ReplayMode) || "off";
@@ -158,6 +158,9 @@ async function serve(): Promise<number> {
   const builderModel = resolveBuilderModel(process.env, config.provider);
   if (process.env.JARVIS_BUILDER_MODEL || !config.roles.builder) roles.assign("builder", roles.for("builder"), builderModel);
   if (roles.roles().length) process.stdout.write(`[roles] ${roles.roles().map((r) => `${r}→${config.roles[r] ?? "default"}@${roles.modelFor(r)}`).join(", ")}\n`);
+  // CF3b paths 2+3: gated npm/pip + GitHub-repo acquisition (change_setting). The optional advisor is an
+  // advisory-only LLM pass on a clean clone (builder model) — never changes the deterministic block verdict.
+  registerInstallTools(tools, (dir) => llmAdvisory(router, builderModel, dir));
   const memory = new MemoryStore(
     config.paths.vaultDir,
     config.paths.memoryDbFile,

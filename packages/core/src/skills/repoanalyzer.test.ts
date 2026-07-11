@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { analyzeRepo } from "./repoanalyzer.js";
+import type { Router } from "../providers/router.js";
+import { analyzeRepo, llmAdvisory } from "./repoanalyzer.js";
 
 function repo(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "repo-"));
@@ -36,6 +37,13 @@ test("analyzeRepo: blocks on exfiltration and flags calls-home to a non-allowlis
   assert.equal(blocked, true); // exfiltration phrasing
   assert.equal(findings.some((f) => f.rule === "exfiltration"), true);
   assert.equal(findings.some((f) => f.rule === "calls-home" && /evil\.example\.com/.test(f.message)), true);
+});
+
+test("llmAdvisory: returns the LLM review, and is advisory only (never touches the block verdict)", async () => {
+  const dir = repo({ "index.js": "export const add = (a, b) => a + b;" });
+  const stub = { chat: async () => ({ content: "none" }) } as unknown as Router;
+  assert.equal(await llmAdvisory(stub, "m", dir), "none");
+  assert.equal(analyzeRepo(dir).blocked, false); // deterministic gate is independent of the advisory
 });
 
 test("analyzeRepo: a clean, licensed repo passes with no blockers", () => {
