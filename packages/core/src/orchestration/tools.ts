@@ -1,6 +1,7 @@
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext } from "../tools/types.js";
 import { Coordinator } from "./coordinator.js";
+import { mergedDiffStat } from "./subagent.js";
 import type { AgentFactory } from "./factory.js";
 import type { RoleRegistry } from "./roles.js";
 
@@ -23,7 +24,7 @@ export function registerOrchestrationTools(registry: ToolRegistry, deps: { roles
 
   registry.register({
     name: "orchestrate",
-    description: "Decompose a goal into distinct approaches, try each as an isolated subagent, prune failures, and return one result.",
+    description: "Decompose a goal into distinct approaches, try each as an isolated subagent, run tests to prune failures, harvest the winner into the sandbox, and return the result with a diff to review. Landing it upstream (dev_commit/dev_push) stays gated.",
     parameters: {
       type: "object",
       properties: {
@@ -36,7 +37,10 @@ export function registerOrchestrationTools(registry: ToolRegistry, deps: { roles
       const result = await coordinator(ctx).run(String(args.goal ?? ""), {
         validateCommand: args.validateCommand ? String(args.validateCommand) : undefined,
       });
-      return result.final;
+      // CF4: surface WHAT landed in the sandbox so the human reviews before landing it upstream. The
+      // commit/push that leaves the sandbox is the gated step (dev_commit = write, dev_push = send/ask).
+      if (!result.merged) return result.final;
+      return `${result.final}\n\nHarvested into the sandbox — review this diff, then land it with the gated dev_commit / dev_push:\n${mergedDiffStat(ctx.policy.actionDir)}`;
     },
   });
 

@@ -153,6 +153,13 @@ export function harvestBranch(repoDir: string, worktree: string, branch: string,
   return true;
 }
 
+/** File-level diff of the most recent harvest merge into `repoDir` — what `orchestrate` landed in the
+ * sandbox, for the user to review before landing it upstream with the gated dev_commit / dev_push. */
+export function mergedDiffStat(repoDir: string): string {
+  const d = git(repoDir, "diff", "--stat", "HEAD^1", "HEAD");
+  return d.code === 0 ? d.out.trim() || "(no file changes)" : "(merge diff unavailable)";
+}
+
 /** Default dev/test validator: run a shell command in the worktree; non-zero exit = branch failed. */
 export function commandValidator(command: string): (worktreeDir: string) => Promise<ValidationResult> {
   return async (worktreeDir) => {
