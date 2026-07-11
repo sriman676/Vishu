@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { Router } from "../providers/router.js";
-import { analyzeRepo, llmAdvisory } from "./repoanalyzer.js";
+import { resolve } from "node:path";
+import { analyzeRepo, applyTrust, isTrustedRepo, llmAdvisory, setRepoTrust, trustedRepoPaths } from "./repoanalyzer.js";
 
 function repo(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "repo-"));
@@ -89,6 +90,30 @@ test("llmAdvisory: returns the LLM review, and is advisory only (never touches t
   const stub = { chat: async () => ({ content: "none" }) } as unknown as Router;
   assert.equal(await llmAdvisory(stub, "m", dir), "none");
   assert.equal(analyzeRepo(dir).blocked, false); // deterministic gate is independent of the advisory
+});
+
+test("trusted-repo allowlist: a trusted repo surfaces findings as warnings and does not block", () => {
+  const blocked = analyzeRepo(repo({ "config.ts": "const k = 'AKIAIOSFODNN7EXAMPLE';" }));
+  assert.equal(blocked.blocked, true); // untrusted → blocks
+  const trusted = applyTrust(blocked);
+  assert.equal(trusted.blocked, false); // trusted → surfaced but not gating
+  assert.equal(trusted.findings.every((f) => f.severity === "warn"), true);
+  assert.equal(trusted.findings.some((f) => /trusted repo/.test(f.message)), true);
+});
+
+test("trusted-repo allowlist: env + workspace file feed the trust set; trust/untrust round-trips", () => {
+  const ws = mkdtempSync(join(tmpdir(), "vishu-ws-"));
+  const repoA = mkdtempSync(join(tmpdir(), "repoA-"));
+  const repoB = mkdtempSync(join(tmpdir(), "repoB-"));
+
+  assert.deepEqual(trustedRepoPaths(ws, { VISHU_TRUSTED_REPOS: `${repoA};${repoB}` }).sort(), [resolve(repoA), resolve(repoB)].sort());
+
+  setRepoTrust(ws, repoA, true);
+  assert.equal(isTrustedRepo(repoA, trustedRepoPaths(ws, {})), true);
+  assert.equal(isTrustedRepo(repoB, trustedRepoPaths(ws, {})), false);
+
+  setRepoTrust(ws, repoA, false); // untrust
+  assert.equal(isTrustedRepo(repoA, trustedRepoPaths(ws, {})), false);
 });
 
 test("analyzeRepo: a clean, licensed repo passes with no blockers", () => {

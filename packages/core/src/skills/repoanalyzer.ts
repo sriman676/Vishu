@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { type Finding, formatFindings, hasBlockers, llmReview, readCode, scanDir } from "../appbuilder/security.js";
 import type { Router } from "../providers/router.js";
 import { guardInjection } from "../security/injection.js";
@@ -113,6 +113,69 @@ export function renderAnalysis(dir: string, res: { findings: Finding[]; blocked:
       ? "PASS WITH WARNINGS — review before you approve the install:"
       : "PASS — no security findings. Still requires your approval to install.";
   return `${head}\n${formatFindings(res.findings)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Trusted-repo allowlist — the user's own audited repos bypass the block gate.
+// ---------------------------------------------------------------------------
+// The trust signal comes from OUTSIDE the scanned tree (workspace file + env), never a marker file
+// inside the repo — a malicious repo could ship its own `.vishu-trust`. A trusted repo still has its
+// findings surfaced (as warnings), so nothing is hidden; it just doesn't hard-block install/wiring.
+
+function trustFile(workspaceDir: string): string {
+  return join(workspaceDir, "trusted-repos.json");
+}
+
+/** Absolute paths the user has explicitly trusted: `VISHU_TRUSTED_REPOS` (`;`/`,`-delimited) ∪ the
+ * workspace `trusted-repos.json` array. Malformed/missing sources are ignored. */
+export function trustedRepoPaths(workspaceDir?: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  const out: string[] = [];
+  if (env.VISHU_TRUSTED_REPOS) out.push(...env.VISHU_TRUSTED_REPOS.split(/[;,]/).map((s) => s.trim()).filter(Boolean));
+  if (workspaceDir) {
+    try {
+      const p = trustFile(workspaceDir);
+      if (existsSync(p)) {
+        const arr = JSON.parse(readFileSync(p, "utf8")) as unknown;
+        if (Array.isArray(arr)) out.push(...arr.filter((x): x is string => typeof x === "string"));
+      }
+    } catch {
+      // malformed trust file — ignore, fail closed (repo stays untrusted)
+    }
+  }
+  return [...new Set(out.map((p) => resolve(p)))];
+}
+
+/** Is `dir` in the trusted set? Path-exact after resolving both sides. */
+export function isTrustedRepo(dir: string, trusted: string[]): boolean {
+  const d = resolve(dir);
+  return trusted.includes(d);
+}
+
+/** A trusted repo: downgrade every block-class finding to warn (still surfaced) and clear the block. */
+export function applyTrust(res: { findings: Finding[]; blocked: boolean }): { findings: Finding[]; blocked: boolean } {
+  const findings = res.findings.map((f) =>
+    f.severity === "block" ? { ...f, severity: "warn" as const, message: `${f.message} [trusted repo — downgraded to warn]` } : f,
+  );
+  return { findings, blocked: false };
+}
+
+/** Add/remove a repo path in the workspace trust list. Returns the updated absolute-path list. */
+export function setRepoTrust(workspaceDir: string, dir: string, trust: boolean): string[] {
+  const p = trustFile(workspaceDir);
+  const target = resolve(dir);
+  let list: string[] = [];
+  try {
+    if (existsSync(p)) {
+      const arr = JSON.parse(readFileSync(p, "utf8")) as unknown;
+      if (Array.isArray(arr)) list = arr.filter((x): x is string => typeof x === "string").map((x) => resolve(x));
+    }
+  } catch {
+    list = [];
+  }
+  const next = trust ? [...new Set([...list, target])] : list.filter((x) => x !== target);
+  mkdirSync(dirname(p), { recursive: true });
+  writeFileSync(p, `${JSON.stringify(next, null, 2)}\n`);
+  return next;
 }
 
 /** Optional advisory LLM pass — breadth the regex gate can't catch (logic-level backdoors, subtle exfil).

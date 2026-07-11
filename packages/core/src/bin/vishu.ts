@@ -57,7 +57,7 @@ import { SkillIndex } from "../skills/index.js";
 import { registerSkillTools } from "../skills/tools.js";
 import { registerAcquireTools } from "../skills/acquire.js";
 import { registerInstallTools } from "../skills/install.js";
-import { analyzeRepo, llmAdvisory, renderAnalysis } from "../skills/repoanalyzer.js";
+import { analyzeRepo, applyTrust, isTrustedRepo, llmAdvisory, renderAnalysis, setRepoTrust, trustedRepoPaths } from "../skills/repoanalyzer.js";
 import { registerBuiltins } from "../tools/builtins.js";
 import { runToolLoop } from "../tools/loop.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -561,9 +561,28 @@ async function main(argv: string[]): Promise<number> {
     // Non-zero exit when blocked so it's scriptable; still requires human approval to install/wire.
     const dir = argv[1];
     if (!dir) return usageErr("vishu vet <repo-dir>");
-    const res = analyzeRepo(dir);
+    const raw = analyzeRepo(dir);
+    // Trusted repos (the user's own audited code) surface findings but don't hard-block (UPGRADES §2.3).
+    const trusted = isTrustedRepo(dir, trustedRepoPaths(loadConfig().paths.workspaceDir));
+    const res = trusted ? applyTrust(raw) : raw;
+    if (trusted) process.stdout.write("[trusted repo — block-class findings downgraded to warn]\n");
     process.stdout.write(`${renderAnalysis(dir, res)}\n`);
     return res.blocked ? 1 : 0;
+  }
+  if (cmd === "trust") {
+    // Manage the trusted-repo allowlist (outside any scanned repo). `--list` shows it; `--remove` untrusts.
+    const workspaceDir = loadConfig().paths.workspaceDir;
+    if (argv[1] === "--list" || !argv[1]) {
+      const trusted = trustedRepoPaths(workspaceDir);
+      process.stdout.write(trusted.length ? `${trusted.join("\n")}\n` : "no trusted repos\n");
+      return 0;
+    }
+    const remove = argv.includes("--remove") || argv.includes("--untrust");
+    const dir = argv.find((a, i) => i > 0 && !a.startsWith("--"));
+    if (!dir) return usageErr("vishu trust <repo-dir> [--remove] | vishu trust --list");
+    const next = setRepoTrust(workspaceDir, dir, !remove);
+    process.stdout.write(`${remove ? "untrusted" : "trusted"} ${dir}\n${next.length} trusted repo(s)\n`);
+    return 0;
   }
   if (cmd === "report") return report(argv[1]);
   if (cmd === "eval") return argv[1] === "swebench" ? sweBenchCmd(argv.slice(2)) : evalCmd(argv[1]);
@@ -588,6 +607,7 @@ async function main(argv: string[]): Promise<number> {
       "  vishu agent <task>           run the tool loop (build/run inside action_dir)",
       "  vishu build <what>           guided secure app builder: spec interview → build → pentest",
       "  vishu vet <repo-dir>         static security gate on a repo (PASS/WARN/BLOCKED; nonzero if blocked)",
+      "  vishu trust <dir> [--remove] trust/untrust a repo (own audited code): findings warn, don't block",
       "  vishu report [days]          weekly token report: where tokens go + where they're wasted",
       "  vishu eval [runner]          run the eval suite (baseline|effort|moa) + track quality over time",
       "  vishu eval swebench [--limit N] [--file f] [--out p]   SWE-bench Lite: write predictions.jsonl",
