@@ -3,7 +3,14 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { ToolRegistry } from "../tools/registry.js";
 import { MODES, ModeManager, proposeMode } from "./modes.js";
+
+function stubRegistry(...names: string[]): ToolRegistry {
+  const r = new ToolRegistry();
+  for (const name of names) r.register({ name, description: name, parameters: { type: "object", properties: {} }, run: async () => "" });
+  return r;
+}
 
 test("mode manager: starts in pa-master and lists the four predefined modes", () => {
   const m = new ModeManager();
@@ -45,6 +52,21 @@ test("register: approved mode hot-loads, activates, and refuses to overwrite", a
   assert.equal(dup.registered, false); // no silent overwrite
   const predefined = await m.register(proposeMode("teacher", "x"));
   assert.equal(predefined.registered, false); // collides with a predefined mode
+});
+
+test("narrowFor: a narrowed mode drops disallowed tools but keeps mode-control; inherit is unchanged", () => {
+  const base = () => stubRegistry("read_file", "write_file", "mode_activate", "mode_list");
+  const m = new ModeManager();
+
+  m.activate("teacher");
+  const narrowed = new Set(m.narrowFor(base()).schemas().map((s) => s.name));
+  assert.equal(narrowed.has("read_file"), true);
+  assert.equal(narrowed.has("mode_activate"), true); // control tool always survives
+  assert.equal(narrowed.has("write_file"), false); // teacher can't write
+
+  m.activate("pa-master"); // inherit → registry returned as-is
+  const reg = base();
+  assert.equal(m.narrowFor(reg), reg);
 });
 
 test("persist + load: a custom mode survives a restart, predefined ones are not duplicated", async () => {
