@@ -31,7 +31,7 @@ const URL_RE = /https?:\/\/[^\s'"`)]+/gi;
  * fixture value or a phrase, not a live threat (UPGRADES §10) — downgrade block→warn so the gate stays
  * meaningful instead of BLOCKING every real repo that ships tests + example configs. */
 const LOW_TRUST_PATH =
-  /(?:^|[\\/])(?:tests?|__tests__|spec|fixtures?|mocks?|examples?)(?:[\\/])|\.(?:test|spec)\.[cm]?[jt]sx?$|\.example\.[^\\/]+$|(?:^|[\\/])\.env\.example$/i;
+  /(?:^|[\\/])(?:tests?|__tests__|spec|fixtures?|mocks?|examples?)(?:[\\/])|\.(?:test|spec)\.[cm]?[jt]sx?$|\.example\.[^\\/]+$|(?:^|[\\/])\.env\.example$|(?:^|[\\/])test-[^\\/]*\.[cm]?[jt]sx?$/i;
 
 /** Outbound-send indicators. Exfiltration is a whole-file phrase match (`guardInjection`), so it only
  * truly blocks if the same file can actually send data out; otherwise it's advisory. */

@@ -33,6 +33,13 @@ const RULES: { rule: string; severity: "block" | "warn"; re: RegExp; message: st
   { rule: "weak-crypto", severity: "warn", re: /\b(?:md5|sha1)\b/i, message: "weak hash — prefer sha256 or better" },
 ];
 
+/** A quoted value that is an all-lowercase kebab/snake identifier (dictionary words + separators, no
+ * mixed case) is a public client-id / slug, not a real credential — real keys/tokens are high-entropy
+ * with mixed case or long random runs. Downgrade a `hardcoded-secret` match on such a value to warn.
+ * e.g. `API_KEY = 'jobboerse-jobsuche'` (arbeitsagentur's public UI client key). Letters-only on purpose:
+ * real keys almost always carry digits or mixed case (`sk-abcdef123456`, `ghp_...`), so those stay block. */
+const PUBLIC_ID_VALUE = /['"][a-z]+(?:[-_][a-z]+)+['"]/;
+
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", ".vishu", "coverage"]);
 const CODE = /\.(?:js|mjs|cjs|ts|jsx|tsx|py|rb|php|go|java|cs|rs|sql|env|json|yml|yaml)$|(?:^|[/\\])\.env/i;
 
@@ -74,7 +81,17 @@ export function scanDir(dir: string): Finding[] {
     text.split("\n").forEach((line, i) => {
       for (const r of RULES) {
         if (r.rule === "sql-injection" && jsTs) continue; // handled by the AST pass below
-        if (r.re.test(line)) findings.push({ file, line: i + 1, rule: r.rule, severity: r.severity, message: r.message });
+        if (!r.re.test(line)) continue;
+        // A hardcoded-secret whose value is an all-lowercase kebab/snake id is a public client-id, not
+        // a credential — surface it (warn) rather than block. Real secrets keep their block severity.
+        const publicId = r.rule === "hardcoded-secret" && PUBLIC_ID_VALUE.test(line);
+        findings.push({
+          file,
+          line: i + 1,
+          rule: r.rule,
+          severity: publicId ? "warn" : r.severity,
+          message: publicId ? `${r.message} [public-looking id — downgraded to warn]` : r.message,
+        });
       }
     });
     if (jsTs) findings.push(...sqlAstFindings(file, text));

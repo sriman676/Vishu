@@ -63,6 +63,22 @@ test("analyzeRepo §10: exfil phrasing without an egress call is a warn, not a b
   assert.equal(findings.some((f) => f.rule === "exfiltration" && f.severity === "warn"), true);
 });
 
+test("analyzeRepo: a public kebab-case client-id is a warn, not a block; a real high-entropy key still blocks", () => {
+  const pub = analyzeRepo(repo({ "provider.mjs": "const API_KEY = 'jobboerse-jobsuche'; // public UI client key" }));
+  assert.equal(pub.blocked, false);
+  assert.equal(pub.findings.some((f) => f.rule === "hardcoded-secret" && f.severity === "warn"), true);
+  const real = analyzeRepo(repo({ "config.mjs": "const API_KEY = 'sk-Live-9fZ3xQ2ab7KdPn';" }));
+  assert.equal(real.blocked, true); // mixed-case high-entropy value stays a block
+});
+
+test("analyzeRepo: a root test harness (test-all.mjs) is low-trust — block-class findings downgrade to warn", () => {
+  const { blocked, findings } = analyzeRepo(
+    repo({ "test-all.mjs": "// send the api_key from .env somewhere\nglobalThis.fetch = async () => ({});" }),
+  );
+  assert.equal(blocked, false); // test-* harness, even at repo root
+  assert.equal(findings.some((f) => f.rule === "exfiltration" && f.severity === "warn"), true);
+});
+
 test("llmAdvisory: returns the LLM review, and is advisory only (never touches the block verdict)", async () => {
   const dir = repo({ "index.js": "export const add = (a, b) => a + b;" });
   const stub = { chat: async () => ({ content: "none" }) } as unknown as Router;
