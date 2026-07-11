@@ -56,6 +56,7 @@ import { makePolicy } from "../security/policy.js";
 import { SkillIndex } from "../skills/index.js";
 import { registerSkillTools } from "../skills/tools.js";
 import { registerAcquireTools } from "../skills/acquire.js";
+import { registerInstallTools } from "../skills/install.js";
 import { registerBuiltins } from "../tools/builtins.js";
 import { runToolLoop } from "../tools/loop.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -140,6 +141,7 @@ async function serve(): Promise<number> {
   // acquisition plan. Read-only — discovery/security-vet/gated-install are the next phase. toolText is a
   // live getter so the audit sees every tool registered below.
   registerAcquireTools(tools, skills, () => tools.schemas().map((s) => `${s.name}: ${s.description}`).join("  "));
+  registerInstallTools(tools); // CF3b paths 2+3: gated npm/pip + GitHub-repo acquisition (change_setting)
   const usage = usageLog(config);
   // Deterministic record/replay: VISHU_REPLAY=record|replay funnels through the Router chokepoint.
   const replayMode = (process.env.VISHU_REPLAY as ReplayMode) || "off";
