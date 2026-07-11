@@ -5,6 +5,7 @@ import { isPaused as defaultIsPaused } from "../automation/pause.js";
 import { type ActionClass, classifyTool, NEVER_WITHOUT_ASKING } from "../security/actions.js";
 import type { AuditLog } from "../security/audit.js";
 import { classifyCommand, type CommandClass } from "../security/classify.js";
+import type { Graduation } from "./graduation.js";
 
 export type Autonomy = "ask_every_time" | "ask_once" | "automatic";
 
@@ -37,6 +38,8 @@ export interface ApprovalOpts {
   sendCap?: number;
   /** Persist the daily send counter here so the cap survives restart. Absent → in-memory (per-process). */
   sendCapFile?: string;
+  /** Progressive-autonomy ladder (UPGRADES §11d). Absent → nothing ever graduates; every ask stays an ask. */
+  graduation?: Graduation;
 }
 
 // Pausing must work even while paused, so the pause controls themselves are never pause-denied.
@@ -54,6 +57,7 @@ export class ApprovalGate {
   private readonly rememberFile?: string;
   private readonly sendCap: number;
   private readonly sendCapFile?: string;
+  private readonly graduation?: Graduation;
   private sendMemDate = "";
   private sendMemCount = 0;
   constructor(
@@ -67,6 +71,7 @@ export class ApprovalGate {
     this.rememberFile = opts.rememberFile;
     this.sendCap = opts.sendCap ?? 30;
     this.sendCapFile = opts.sendCapFile;
+    this.graduation = opts.graduation;
     this.loadRemembered();
   }
 
@@ -144,15 +149,25 @@ export class ApprovalGate {
       if (action === "send" && this.sendsToday() >= this.sendCap) {
         return { allowed: false, reason: `daily send cap reached (${this.sendCap}/day)` };
       }
+      // Graduated (§11d): an opted-in class with an unbroken streak of yeses auto-allows — still
+      // capped, still audited (by decide), still pause-honoring (pause already returned above).
+      if (this.graduation?.isPromoted(action, call.name)) {
+        if (action === "send") this.recordSend();
+        return { allowed: true, reason: "graduated" };
+      }
       // send/spend demand a TYPED phrase, not a bare y/N — a stricter, deliberate confirmation.
       const confirm = action === "send" || action === "spend" ? action.toUpperCase() : undefined;
       const ok = await this.ask({ tool: call.name, summary: summarize(call), klass, action, confirm });
       if (ok && action === "send") this.recordSend();
+      this.graduation?.record(action, call.name, ok); // advance/reset the ladder on the human's verdict
       return { allowed: ok, reason: ok ? undefined : "user denied" };
     }
 
     // Everything else: only risky shell needs a human; reads + safe writes auto-allow.
     if (this.autonomy === "automatic" || klass === "safe") return { allowed: true };
+
+    // Graduated (§11d): a risky command whose class earned an opted-in streak auto-allows.
+    if (this.graduation?.isPromoted(action, call.name)) return { allowed: true, reason: "graduated" };
 
     if (this.autonomy === "ask_once" && this.remembered.has(call.name)) {
       return { allowed: this.remembered.get(call.name)!, reason: "remembered" };
@@ -163,6 +178,7 @@ export class ApprovalGate {
       this.remembered.set(call.name, ok);
       this.saveRemembered(); // durable across restarts (UPGRADES §1)
     }
+    this.graduation?.record(action, call.name, ok); // advance/reset the ladder on the human's verdict
     return { allowed: ok, reason: ok ? undefined : "user denied" };
   }
 }
