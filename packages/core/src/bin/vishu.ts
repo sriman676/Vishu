@@ -57,7 +57,7 @@ import { SkillIndex } from "../skills/index.js";
 import { registerSkillTools } from "../skills/tools.js";
 import { registerAcquireTools } from "../skills/acquire.js";
 import { registerInstallTools } from "../skills/install.js";
-import { llmAdvisory } from "../skills/repoanalyzer.js";
+import { analyzeRepo, llmAdvisory, renderAnalysis } from "../skills/repoanalyzer.js";
 import { registerBuiltins } from "../tools/builtins.js";
 import { runToolLoop } from "../tools/loop.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -555,6 +555,15 @@ async function main(argv: string[]): Promise<number> {
     if (!text) return usageErr("vishu build <what to build>");
     return build(text);
   }
+  if (cmd === "vet") {
+    // CF3c deterministic security gate on a repo dir (cross-cutting "vetRepo before it runs").
+    // Non-zero exit when blocked so it's scriptable; still requires human approval to install/wire.
+    const dir = argv[1];
+    if (!dir) return usageErr("vishu vet <repo-dir>");
+    const res = analyzeRepo(dir);
+    process.stdout.write(`${renderAnalysis(dir, res)}\n`);
+    return res.blocked ? 1 : 0;
+  }
   if (cmd === "report") return report(argv[1]);
   if (cmd === "eval") return argv[1] === "swebench" ? sweBenchCmd(argv.slice(2)) : evalCmd(argv[1]);
   if (cmd === "rpc") {
@@ -577,6 +586,7 @@ async function main(argv: string[]): Promise<number> {
       "  vishu chat <message>         one-shot chat via the configured provider",
       "  vishu agent <task>           run the tool loop (build/run inside action_dir)",
       "  vishu build <what>           guided secure app builder: spec interview → build → pentest",
+      "  vishu vet <repo-dir>         static security gate on a repo (PASS/WARN/BLOCKED; nonzero if blocked)",
       "  vishu report [days]          weekly token report: where tokens go + where they're wasted",
       "  vishu eval [runner]          run the eval suite (baseline|effort|moa) + track quality over time",
       "  vishu eval swebench [--limit N] [--file f] [--out p]   SWE-bench Lite: write predictions.jsonl",
