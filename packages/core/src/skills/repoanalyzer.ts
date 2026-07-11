@@ -27,6 +27,17 @@ const REPO_RULES: { rule: string; severity: "block" | "warn"; re: RegExp; messag
 
 const URL_RE = /https?:\/\/[^\s'"`)]+/gi;
 
+/** Low-signal paths: tests, fixtures, mocks, examples, `.env.example`. A block here is almost always a
+ * fixture value or a phrase, not a live threat (UPGRADES §10) — downgrade block→warn so the gate stays
+ * meaningful instead of BLOCKING every real repo that ships tests + example configs. */
+const LOW_TRUST_PATH =
+  /(?:^|[\\/])(?:tests?|__tests__|spec|fixtures?|mocks?|examples?)(?:[\\/])|\.(?:test|spec)\.[cm]?[jt]sx?$|\.example\.[^\\/]+$|(?:^|[\\/])\.env\.example$/i;
+
+/** Outbound-send indicators. Exfiltration is a whole-file phrase match (`guardInjection`), so it only
+ * truly blocks if the same file can actually send data out; otherwise it's advisory. */
+const EGRESS_CALL =
+  /\b(?:fetch|axios|XMLHttpRequest|WebSocket|nodemailer|sendMail|urllib|smtplib)\b|https?\.request|net\.connect|requests\.(?:post|put|get|patch)|http\.client/i;
+
 /** Static-analyze a cloned repo directory. Returns every finding plus whether any is a hard blocker. */
 export function analyzeRepo(dir: string): { findings: Finding[]; blocked: boolean } {
   const findings: Finding[] = scanDir(dir); // secrets / SQLi / eval — the shared deterministic base
@@ -41,14 +52,31 @@ export function analyzeRepo(dir: string): { findings: Finding[]; blocked: boolea
         if (eg.host && !eg.allowlisted) findings.push({ file, line: i + 1, rule: "calls-home", severity: "warn", message: `outbound call to non-allowlisted host ${eg.host}` });
       }
     });
-    // exfiltration phrasing anywhere in the file (e.g. "send the .env token") → block
-    if (guardInjection(text) === "block") findings.push({ file, line: 1, rule: "exfiltration", severity: "block", message: "code/text reads secrets to send them out" });
+    // exfiltration phrasing anywhere in the file (e.g. "send the .env token"). Whole-file phrase match,
+    // so only a real block when the file also makes an outbound call; else advisory (UPGRADES §10).
+    if (guardInjection(text) === "block") {
+      const canSend = EGRESS_CALL.test(text);
+      findings.push({
+        file,
+        line: 1,
+        rule: "exfiltration",
+        severity: canSend ? "block" : "warn",
+        message: canSend ? "reads secrets AND can send them out" : "mentions reading/sending secrets, but no egress call found",
+      });
+    }
   }
 
   // install hooks — scripts that run on `npm install` before anyone reviews the code
   findings.push(...scanInstallHooks(dir));
   // provenance — a repo with no license is a weaker signal (typosquat / throwaway)
   if (!hasLicense(dir)) findings.push({ file: ".", line: 1, rule: "no-license", severity: "warn", message: "no LICENSE / license field — provenance unclear" });
+
+  // path-scoped severity: a block in a test/example/fixture path is downgraded to a warn (UPGRADES §10).
+  for (const f of findings)
+    if (f.severity === "block" && LOW_TRUST_PATH.test(f.file)) {
+      f.severity = "warn";
+      f.message += " [test/example path — downgraded to warn]";
+    }
 
   return { findings, blocked: hasBlockers(findings) };
 }

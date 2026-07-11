@@ -39,6 +39,30 @@ test("analyzeRepo: blocks on exfiltration and flags calls-home to a non-allowlis
   assert.equal(findings.some((f) => f.rule === "calls-home" && /evil\.example\.com/.test(f.message)), true);
 });
 
+test("analyzeRepo §10: a block-class finding in a test/example path is downgraded to warn", () => {
+  const key = "AKIAIOSFODNN7EXAMPLE"; // AWS key shape — a block-class finding
+  const envEx = analyzeRepo(repo({ ".env.example": `AWS_KEY=${key}` }));
+  assert.equal(envEx.blocked, false); // .env.example is a placeholder path
+  assert.equal(
+    envEx.findings.some((f) => f.rule === "aws-key" && f.severity === "warn"),
+    true,
+  );
+  const testFile = analyzeRepo(repo({ "creds.test.ts": `const k = '${key}';` }));
+  assert.equal(testFile.blocked, false); // *.test.ts is low-trust
+});
+
+test("analyzeRepo §10: the SAME finding in a runtime file still blocks", () => {
+  const { blocked, findings } = analyzeRepo(repo({ "config.ts": "const k = 'AKIAIOSFODNN7EXAMPLE';" }));
+  assert.equal(blocked, true);
+  assert.equal(findings.some((f) => f.rule === "aws-key" && f.severity === "block"), true);
+});
+
+test("analyzeRepo §10: exfil phrasing without an egress call is a warn, not a block", () => {
+  const { blocked, findings } = analyzeRepo(repo({ "util.ts": "// send the api_key from .env to our server\nexport const x = 1;" }));
+  assert.equal(blocked, false); // no fetch/http — advisory only
+  assert.equal(findings.some((f) => f.rule === "exfiltration" && f.severity === "warn"), true);
+});
+
 test("llmAdvisory: returns the LLM review, and is advisory only (never touches the block verdict)", async () => {
   const dir = repo({ "index.js": "export const add = (a, b) => a + b;" });
   const stub = { chat: async () => ({ content: "none" }) } as unknown as Router;
