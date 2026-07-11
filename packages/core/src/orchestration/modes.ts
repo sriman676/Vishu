@@ -5,6 +5,7 @@ import type { RunLog } from "../reliability/runlog.js";
 import type { AuditLog } from "../security/audit.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext } from "../tools/types.js";
+import { narrowRegistry } from "./archetypes.js";
 
 /** A Mode/mood: a persona the WHOLE agent switches into. Unlike an Archetype (a subagent role), a Mode
  * reshapes the main agent's surface — its system prompt, the tool subset it may use, the memory folder it
@@ -56,6 +57,10 @@ export const MODES: Record<string, Mode> = {
 
 const DEFAULT_MODE = "pa-master";
 
+/** Tools that survive a mode's tool-narrowing no matter how restrictive it is — otherwise a read-only
+ * persona (teacher/interviewer) would trap the agent with no way to switch back out. */
+const MODE_CONTROL_TOOLS = ["mode_list", "mode_activate"];
+
 /** Draft a bespoke mode from a described need. Deterministic (no LLM in V1: a template over the need),
  * mirroring `proposeAgent`. Inert until `register` clears the gate. A custom mode inherits all tools (the
  * user approves the persona, not a narrowed toolset) and gets its own memory folder. */
@@ -93,6 +98,16 @@ export class ModeManager {
   /** The mode the main agent is currently in. */
   active(): Mode {
     return this.modes.get(this.activeName) ?? MODES[DEFAULT_MODE]!;
+  }
+
+  /** Narrow a registry to the active mode's tool subset (§8): an "inherit" mode gets everything; a listed
+   * mode gets its tools ∪ the mode-control tools (so it can always switch back out). Enforcement, not just
+   * a prompt hint — teacher/interviewer physically can't write or shell. */
+  narrowFor(registry: ToolRegistry): ToolRegistry {
+    const m = this.active();
+    if (m.tools === "inherit") return registry;
+    const tools = [...new Set([...m.tools, ...MODE_CONTROL_TOOLS])];
+    return narrowRegistry(registry, { name: m.name, system: m.system, tools });
   }
 
   /** Switch persona to an existing mode. Non-destructive + reversible, so not gated — but a mode that
