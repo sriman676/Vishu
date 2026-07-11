@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { EchoProvider } from "../providers/mock.js";
+import { ToolRegistry } from "../tools/registry.js";
 import { rollupSession, selfHealMemory } from "./rollup.js";
 import { MemoryStore } from "./store.js";
+import { registerMemoryTools } from "./tools.js";
 
 const note = (meta: string, body: string) => `---\n${meta}\n---\n${body}\n`;
 
@@ -22,6 +24,30 @@ test("write a fact one session, recall it the next", async () => {
 
   store = new MemoryStore(vault, db); // new session
   assert.match((await store.recall("what is the user name")).text, /Vishnu/);
+  store.close();
+});
+
+test("memory tools scope write+recall to the active mode's folder (UPGRADES §8)", async () => {
+  const { vault, db } = paths();
+  const store = new MemoryStore(vault, db);
+  await store.put({ content: "Cofounder equity split is 50/50.", subject: "equity", folder: "cofounder" });
+
+  let folder: string | undefined = "interview";
+  const reg = new ToolRegistry();
+  registerMemoryTools(reg, store, () => folder);
+
+  await reg.get("memory_write").run({ content: "STAR story: led a migration under deadline." });
+
+  // Interview mode recalls its own note, never the co-founder partition.
+  const inInterview = String(await reg.get("memory_recall").run({ query: "equity migration story" }));
+  assert.match(inInterview, /migration/);
+  assert.doesNotMatch(inInterview, /equity/);
+
+  // Switch mode → the co-founder note is now in scope, the interview note is not.
+  folder = "cofounder";
+  const inCofounder = String(await reg.get("memory_recall").run({ query: "equity migration story" }));
+  assert.match(inCofounder, /equity/);
+  assert.doesNotMatch(inCofounder, /migration/);
   store.close();
 });
 

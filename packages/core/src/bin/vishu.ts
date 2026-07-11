@@ -167,7 +167,6 @@ async function serve(): Promise<number> {
     join(config.paths.workspaceDir, "memory-events.log"),
     router.canEmbed() ? (texts) => router.embed(texts) : undefined,
   );
-  registerMemoryTools(tools, memory);
   registerMemory(registry, memory);
   registerUsage(registry, config.paths.workspaceDir);
   registerReasoningTools(tools, { router, model: config.provider.model });
@@ -207,6 +206,8 @@ async function serve(): Promise<number> {
   // into the agent's system prompt (below), so a switch actually changes behaviour.
   const modes = new ModeManager({ ask, audit, storePath: join(config.paths.workspaceDir, "modes.json") });
   registerModeTools(tools, modes);
+  // §8: scope agent memory write+recall to the active mode's folder (registered here — after `modes` exists).
+  registerMemoryTools(tools, memory, () => modes.active().memoryFolder);
   // Boot invariants (UPGRADES §5): never come up ungated, unlogged, or unable to pause. Fail loud.
   assertBoot(selfCheck({ gateWired: Boolean(ask) }), (s) => process.stdout.write(s));
   const agentService = new AgentService({
