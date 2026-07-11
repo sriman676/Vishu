@@ -79,6 +79,11 @@ test("analyzeRepo: a root test harness (test-all.mjs) is low-trust — block-cla
   assert.equal(findings.some((f) => f.rule === "exfiltration" && f.severity === "warn"), true);
 });
 
+test("analyzeRepo: a SQL-shaped string in a yaml config is not a sql-injection finding (config, not code)", () => {
+  const { findings } = analyzeRepo(repo({ "action.yml": "run: SELECT * FROM t WHERE id = ${{ inputs.id }}\n" }));
+  assert.equal(findings.some((f) => f.rule === "sql-injection"), false);
+});
+
 test("llmAdvisory: returns the LLM review, and is advisory only (never touches the block verdict)", async () => {
   const dir = repo({ "index.js": "export const add = (a, b) => a + b;" });
   const stub = { chat: async () => ({ content: "none" }) } as unknown as Router;

@@ -42,23 +42,53 @@ function calleeName(call: ts.CallExpression): string {
   return "";
 }
 
+/** Is `node` a static string expression — a literal, or a concat/template of literals and other static
+ * consts? Used to identify `const COLS = "id, name, …"` column-list fragments. */
+function isStaticStringExpr(node: ts.Expression, consts: Set<string>): boolean {
+  if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)) return true;
+  if (ts.isParenthesizedExpression(node)) return isStaticStringExpr(node.expression, consts);
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken)
+    return isStaticStringExpr(node.left, consts) && isStaticStringExpr(node.right, consts);
+  if (ts.isTemplateExpression(node)) return node.templateSpans.every((s) => isStaticStringExpr(s.expression, consts));
+  if (ts.isIdentifier(node)) return consts.has(node.text);
+  return false;
+}
+
+/** Names of `const`s bound to a static string — resolved so an interpolated `${COLS}` (a column-list
+ * constant) reads as SQL *structure*, not an inlined value. Source-order so a const built from earlier
+ * consts resolves; forward refs are (conservatively) treated as values. */
+function collectStaticStringConsts(sf: ts.SourceFile): Set<string> {
+  const consts = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableStatement(node) && node.declarationList.flags & ts.NodeFlags.Const) {
+      for (const d of node.declarationList.declarations)
+        if (ts.isIdentifier(d.name) && d.initializer && isStaticStringExpr(d.initializer, consts)) consts.add(d.name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return consts;
+}
+
 /** Is a dynamic operand "safe" — i.e. it contributes SQL structure or a coerced/parameterized part,
- * not an inlined value? Identifiers, property/element access, and unknown calls are treated as values. */
-function isSafeOperand(node: ts.Expression): boolean {
+ * not an inlined value? Identifiers that resolve to a static-string const (column lists) are structure;
+ * other identifiers, property/element access, and unknown calls are treated as values. */
+function isSafeOperand(node: ts.Expression, consts: Set<string>): boolean {
   if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)) return true;
   if (node.kind === ts.SyntaxKind.TrueKeyword || node.kind === ts.SyntaxKind.FalseKeyword) return true;
-  if (ts.isParenthesizedExpression(node)) return isSafeOperand(node.expression);
-  if (ts.isConditionalExpression(node)) return isSafeOperand(node.whenTrue) && isSafeOperand(node.whenFalse);
+  if (ts.isParenthesizedExpression(node)) return isSafeOperand(node.expression, consts);
+  if (ts.isConditionalExpression(node)) return isSafeOperand(node.whenTrue, consts) && isSafeOperand(node.whenFalse, consts);
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken)
-    return isSafeOperand(node.left) && isSafeOperand(node.right);
-  if (ts.isTemplateExpression(node)) return node.templateSpans.every((s) => isSafeOperand(s.expression));
+    return isSafeOperand(node.left, consts) && isSafeOperand(node.right, consts);
+  if (ts.isTemplateExpression(node)) return node.templateSpans.every((s) => isSafeOperand(s.expression, consts));
   if (ts.isCallExpression(node)) {
     if (STRUCTURAL_CALLS.has(calleeName(node))) return true;
     // A chained call on a safe receiver stays structural, e.g. `'?,'.repeat(n).slice(0, -1)`.
     const e = node.expression;
-    return ts.isPropertyAccessExpression(e) && isSafeOperand(e.expression);
+    return ts.isPropertyAccessExpression(e) && isSafeOperand(e.expression, consts);
   }
-  // Identifier / PropertyAccess / ElementAccess / anything else that yields a value → unsafe.
+  if (ts.isIdentifier(node)) return consts.has(node.text); // a static-string const (column list) is structure
+  // PropertyAccess / ElementAccess / anything else that yields a value → unsafe.
   return false;
 }
 
@@ -106,6 +136,7 @@ export function sqlAstFindings(file: string, text: string): Finding[] {
   }
 
   const line = (node: ts.Node) => sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+  const staticConsts = collectStaticStringConsts(sf);
 
   const visit = (node: ts.Node): void => {
     const isPlus =
@@ -116,7 +147,7 @@ export function sqlAstFindings(file: string, text: string): Finding[] {
       const dynamics: ts.Expression[] = [];
       flatten(node as ts.Expression, statics, dynamics);
       if (dynamics.length > 0 && SQL_SHAPE.test(statics.join(" "))) {
-        const unsafe = dynamics.some((d) => !isSafeOperand(d));
+        const unsafe = dynamics.some((d) => !isSafeOperand(d, staticConsts));
         findings.push({
           file,
           line: line(node),

@@ -32,6 +32,19 @@ test("placeholder list built with .repeat → not a block", () => {
   assert.equal(r.block, false);
 });
 
+test("interpolating a static column-list const with bound params → not a block (the open-design FP)", () => {
+  const src = 'const COLS = "id, name, project_id";\nconst sql = `SELECT ${COLS} FROM deployments WHERE project_id = ?`;';
+  const r = sev("db.ts", src);
+  assert.equal(r.block, false);
+  assert.equal(r.warn, true);
+});
+
+test("interpolating a const bound to a VALUE (not a static string) → block", () => {
+  const src = "const table = req.params.t;\nconst sql = `SELECT * FROM ${table} WHERE id = ?`;";
+  const r = sev("db.ts", src);
+  assert.equal(r.block, true);
+});
+
 test('English word "from" in a log template literal → no finding (not SQL)', () => {
   const r = sev("log.mjs", "console.log(`${total} applications (${range.from} to ${range.to})`);");
   assert.equal(r.n, 0);

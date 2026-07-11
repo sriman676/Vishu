@@ -80,7 +80,9 @@ export function scanDir(dir: string): Finding[] {
     const jsTs = isJsTs(file);
     text.split("\n").forEach((line, i) => {
       for (const r of RULES) {
-        if (r.rule === "sql-injection" && jsTs) continue; // handled by the AST pass below
+        // sql-injection: JS/TS is handled by the AST pass below; yaml/json/env are config/data, not
+        // executable SQL, so the coarse regex only fires false positives there (e.g. a `${{ }}` action.yml).
+        if (r.rule === "sql-injection" && (jsTs || /\.(?:ya?ml|json|env)$/i.test(file))) continue;
         if (!r.re.test(line)) continue;
         // A hardcoded-secret whose value is an all-lowercase kebab/snake id is a public client-id, not
         // a credential — surface it (warn) rather than block. Real secrets keep their block severity.
