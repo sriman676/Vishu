@@ -26,6 +26,9 @@ importers:
       '@scure/base':
         specifier: ^2.2.0
         version: 2.2.0
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
       viem:
         specifier: ^2.53.1
         version: 2.53.1(typescript@5.9.3)
@@ -36,9 +39,6 @@ importers:
       tsx:
         specifier: ^4.20.0
         version: 4.22.4
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
 
   packages/frontend:
     dependencies:

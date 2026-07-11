@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { Router } from "../providers/router.js";
+import { isJsTs, sqlAstFindings } from "./sqlast.js";
 
 export interface Finding {
   file: string;
@@ -63,13 +64,20 @@ export function readCode(dir: string): { file: string; text: string }[] {
   return out;
 }
 
-/** Scan a directory tree for security findings — line-level, deterministic, dependency-free. */
+/** Scan a directory tree for security findings — line-level, deterministic. For JS/TS the `sql-injection`
+ * rule is replaced by an AST pass (`sqlAstFindings`) that distinguishes an interpolated value from
+ * structural/parameterized assembly (UPGRADES §10); other languages keep the line regex. */
 export function scanDir(dir: string): Finding[] {
   const findings: Finding[] = [];
   for (const { file, text } of readCode(dir)) {
+    const jsTs = isJsTs(file);
     text.split("\n").forEach((line, i) => {
-      for (const r of RULES) if (r.re.test(line)) findings.push({ file, line: i + 1, rule: r.rule, severity: r.severity, message: r.message });
+      for (const r of RULES) {
+        if (r.rule === "sql-injection" && jsTs) continue; // handled by the AST pass below
+        if (r.re.test(line)) findings.push({ file, line: i + 1, rule: r.rule, severity: r.severity, message: r.message });
+      }
     });
+    if (jsTs) findings.push(...sqlAstFindings(file, text));
   }
   return findings;
 }
