@@ -60,10 +60,14 @@ export class OpenAICompatibleProvider implements Provider {
   }
 
   private body(req: ChatRequest, stream: boolean): string {
+    const tools = req.tools?.map((t) => ({ type: "function", function: t }));
     return JSON.stringify({
       model: req.model,
       messages: req.messages.map(toOpenAIMessage),
-      tools: req.tools?.map((t) => ({ type: "function", function: t })),
+      tools,
+      // NIM's llama models reject parallel tool-calls ("only supports single tool-calls at once");
+      // force one-at-a-time whenever tools are offered. Harmless on providers that allow parallel.
+      ...(tools?.length ? { parallel_tool_calls: false } : {}),
       temperature: req.temperature,
       max_tokens: req.maxTokens,
       stream,
