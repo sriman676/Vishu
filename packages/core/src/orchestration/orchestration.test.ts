@@ -276,6 +276,23 @@ test("harvest: the winning branch's work is merged back into the action repo", a
   assert.equal(readFileSync(join(repoDir, "artifact.txt"), "utf8"), "winner"); // merged into the repo
 });
 
+test("harvest: a run that changes nothing is not merged — no empty harvest commit (UPGRADES §7)", async () => {
+  const repoDir = mkdtempSync(join(tmpdir(), "vishu-harvest-empty-"));
+  const outcome = await runSubagent({
+    archetype: ARCHETYPES.researcher!, // read-only archetype — produces no diff
+    task: "look but don't touch",
+    parentContext: "ctx",
+    parentPolicy: makePolicy("full", repoDir),
+    parentRegistry: registerBuiltins(new ToolRegistry()),
+    router: new Router([new EchoProvider()]),
+    model: "mock",
+    repoDir,
+    harvest: true,
+    validate: async () => ({ ok: true, output: "reviewed" }), // passes, writes nothing
+  });
+  assert.equal(outcome.merged, false); // clean worktree → nothing harvested
+});
+
 test("subagent honours an `ask`: a send-class tool runs only when approval says yes (UPGRADES §4)", async () => {
   let ran = false;
   const sender: Tool = {

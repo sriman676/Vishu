@@ -143,7 +143,14 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentOutcom
  * hand. Single-winner harvest rarely conflicts (only one branch merges). */
 export function harvestBranch(repoDir: string, worktree: string, branch: string, runLog?: RunLog): boolean {
   git(worktree, "add", "-A");
-  git(worktree, "commit", "-m", `vishu: harvest ${branch}`, "--allow-empty");
+  // Nothing changed (a read-only archetype — researcher/critic — or a no-op run): skip the commit+merge
+  // so a read-only dispatch never lands an empty harvest commit (UPGRADES §7). Gating on the actual diff,
+  // not the archetype, also covers a writing archetype that happened to change nothing.
+  if (!git(worktree, "status", "--porcelain").out.trim()) {
+    runLog?.log("branch_harvest", `${branch}: no changes — nothing to harvest`);
+    return false;
+  }
+  git(worktree, "commit", "-m", `vishu: harvest ${branch}`);
   const merge = git(repoDir, "merge", "--no-ff", "--no-edit", branch);
   if (merge.code !== 0) {
     git(repoDir, "merge", "--abort");
