@@ -69,6 +69,39 @@ test("DomainManager: a domain's declared egressHosts fold into the egress allowl
   }
 });
 
+test("DomainManager: a domain that fails to start is skipped, others still register (§11c stub-safe)", async () => {
+  const registry = new ToolRegistry();
+  const dm = new DomainManager(
+    [
+      { id: "composio", cmd: "definitely-not-a-real-binary-xyz", args: [], reconnect: false }, // unconfigured stub
+      { id: "careerops", cmd: process.execPath, args: [stub()], reconnect: false },
+    ],
+    registry,
+  );
+  try {
+    const names = await dm.start();
+    assert.deepEqual(names, ["careerops__add"]); // broken domain skipped, the working one still registered
+  } finally {
+    dm.stop();
+  }
+});
+
+test("DomainManager: a requireEnv domain stays inert until its key is set (§11c stub)", async () => {
+  const registry = new ToolRegistry();
+  const cfg = { id: "composio", cmd: process.execPath, args: [stub()], reconnect: false, requireEnv: "TEST_COMPOSIO_KEY" };
+  delete process.env.TEST_COMPOSIO_KEY;
+  assert.deepEqual(await new DomainManager([cfg], registry).start(), []); // key unset → not spawned
+
+  process.env.TEST_COMPOSIO_KEY = "stub";
+  const dm = new DomainManager([cfg], registry);
+  try {
+    assert.deepEqual(await dm.start(), ["composio__add"]); // key set → attaches
+  } finally {
+    dm.stop();
+    delete process.env.TEST_COMPOSIO_KEY;
+  }
+});
+
 test("loadDomains: parses the domains array, returns [] when the file is missing/invalid", () => {
   const dir = mkdtempSync(join(tmpdir(), "vishu-dl-"));
   const f = join(dir, "jarvis.domains.json");
