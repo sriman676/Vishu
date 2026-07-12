@@ -1,6 +1,8 @@
 import type { Router } from "../providers/router.js";
 import type { ChatMessage } from "../providers/types.js";
 import { ApprovalGate, type AskFn, type Autonomy } from "../reliability/approvals.js";
+import type { ActionClass } from "../security/actions.js";
+import type { DecisionStore } from "../reliability/autonomy.js";
 import { type Graduation, graduationFromEnv } from "../reliability/graduation.js";
 import type { RunLog } from "../reliability/runlog.js";
 import type { AuditLog } from "../security/audit.js";
@@ -41,6 +43,10 @@ export interface AgentDeps {
   /** Progressive-autonomy ladder (UPGRADES §11d). Absent → built from env (VISHU_GRADUATE*); still
    * undefined when unset, so nothing graduates and every ask stays an ask. */
   graduation?: Graduation;
+  /** Learned-autonomy decision log + grant list (Alfred ask→confirm→act). Absent → nothing logged/granted. */
+  decisions?: DecisionStore;
+  /** Notify when a reversible signature crosses the suggest threshold (bin publishes a bus notice). */
+  suggest?: (actionClass: ActionClass, signature: string) => void;
 }
 
 export interface TurnResult {
@@ -69,6 +75,8 @@ export class AgentService {
       sendCapFile: deps.sendCapFile,
       sendCap: deps.sendCap,
       graduation: deps.graduation ?? graduationFromEnv(), // §11d: opt-in classes graduate ask→auto
+      decisions: deps.decisions, // learned-autonomy log + grant list (grant is RPC-only, floor-excluded)
+      suggest: deps.suggest,
     });
   }
 

@@ -56,6 +56,7 @@ import { RunLog } from "../reliability/runlog.js";
 import { makeAsk, terminalPrompt } from "../reliability/ask.js";
 import { AuditLog } from "../security/audit.js";
 import { assertBoot, selfCheck } from "../reliability/selfcheck.js";
+import { DecisionStore, registerDecisions } from "../reliability/autonomy.js";
 import { isPaused, pause, pauseFile, resume } from "../automation/pause.js";
 import { makePolicy } from "../security/policy.js";
 import { SkillIndex } from "../skills/index.js";
@@ -201,6 +202,16 @@ async function serve(): Promise<number> {
   // Daily send-cap counter (PLAN F7 ≤30/day; VISHU_SEND_CAP overrides), persisted across restarts.
   const sendCapFile = join(config.paths.workspaceDir, "send-count.json");
   const sendCap = Number(process.env.VISHU_SEND_CAP) || 30;
+  // Learned autonomy (Alfred ask→confirm→act): log every gate verdict; after N clean approvals of a
+  // reversible signature, SUGGEST an auto-approve grant on the bus. Grants (RPC-only, floor-excluded)
+  // are consulted before asking. VISHU_AUTONOMY_N overrides the default 3.
+  const decisions = new DecisionStore(
+    join(config.paths.workspaceDir, "decisions.jsonl"),
+    join(config.paths.workspaceDir, "grants.json"),
+    Number(process.env.VISHU_AUTONOMY_N) || 3,
+  );
+  const suggest = (actionClass: string, signature: string) =>
+    bus.publish({ domain: "autonomy", type: "suggest_grant", payload: { actionClass, signature } });
   // Agent factory + orchestration tools: registered here (not earlier) so the factory shares the same
   // `ask`/`audit` gate. `create_agent` gates registration; approved agents persist in agents.json and
   // become routable by the `dispatch` tool (Phase 1 Step 5 loop closure).
@@ -231,8 +242,11 @@ async function serve(): Promise<number> {
     rememberFile,
     sendCapFile,
     sendCap,
+    decisions,
+    suggest,
   }, sessions);
   registerAgent(registry, agentService);
+  registerDecisions(registry, decisions); // vishu.decisions_list / autonomy_grant / autonomy_revoke
 
   // Agent-level task queue: fire-and-poll multitasking, N turns at once (VISHU_AGENT_CONCURRENCY, default 2).
   // Each task gets its own Terminal so concurrent shells don't interleave; the session store is shared.
@@ -241,7 +255,7 @@ async function serve(): Promise<number> {
     const terminal = new Terminal(config.paths.actionDir);
     try {
       const svc = new AgentService(
-        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile, mode: modes, ask, audit, rememberFile, sendCapFile, sendCap },
+        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile, mode: modes, ask, audit, rememberFile, sendCapFile, sendCap, decisions, suggest },
         sessions,
       );
       return await svc.startTurn(sid, msg);

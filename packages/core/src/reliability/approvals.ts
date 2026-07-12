@@ -5,6 +5,7 @@ import { isPaused as defaultIsPaused } from "../automation/pause.js";
 import { type ActionClass, classifyTool, NEVER_WITHOUT_ASKING } from "../security/actions.js";
 import type { AuditLog } from "../security/audit.js";
 import { classifyCommand, type CommandClass } from "../security/classify.js";
+import type { DecisionStore } from "./autonomy.js";
 import type { Graduation } from "./graduation.js";
 
 export type Autonomy = "ask_every_time" | "ask_once" | "automatic";
@@ -40,6 +41,10 @@ export interface ApprovalOpts {
   sendCapFile?: string;
   /** Progressive-autonomy ladder (UPGRADES §11d). Absent → nothing ever graduates; every ask stays an ask. */
   graduation?: Graduation;
+  /** Learned-autonomy decision log + grant list (Alfred ask→confirm→act). Absent → nothing logged/granted. */
+  decisions?: DecisionStore;
+  /** Called once when a reversible signature crosses the suggest threshold (bin publishes a bus notice). */
+  suggest?: (actionClass: ActionClass, signature: string) => void;
 }
 
 // Pausing must work even while paused, so the pause controls themselves are never pause-denied.
@@ -58,6 +63,8 @@ export class ApprovalGate {
   private readonly sendCap: number;
   private readonly sendCapFile?: string;
   private readonly graduation?: Graduation;
+  private readonly decisions?: DecisionStore;
+  private readonly suggest?: (actionClass: ActionClass, signature: string) => void;
   private sendMemDate = "";
   private sendMemCount = 0;
   constructor(
@@ -72,6 +79,8 @@ export class ApprovalGate {
     this.sendCap = opts.sendCap ?? 30;
     this.sendCapFile = opts.sendCapFile;
     this.graduation = opts.graduation;
+    this.decisions = opts.decisions;
+    this.suggest = opts.suggest;
     this.loadRemembered();
   }
 
@@ -160,11 +169,16 @@ export class ApprovalGate {
       const ok = await this.ask({ tool: call.name, summary: summarize(call), klass, action, confirm });
       if (ok && action === "send") this.recordSend();
       this.graduation?.record(action, call.name, ok); // advance/reset the ladder on the human's verdict
+      this.recordDecision(action, call.name, ok); // log-only here: floor classes can never be suggested/granted
       return { allowed: ok, reason: ok ? undefined : "user denied" };
     }
 
     // Everything else: only risky shell needs a human; reads + safe writes auto-allow.
     if (this.autonomy === "automatic" || klass === "safe") return { allowed: true };
+
+    // Learned autonomy (Alfred ask→confirm→act): a signature the human explicitly granted auto-allows.
+    // grant() refuses floor classes, so a grant is only ever a reversible one — this stays fail-closed.
+    if (this.decisions?.isGranted(action, call.name)) return { allowed: true, reason: "auto-approved (granted)" };
 
     // Graduated (§11d): a risky command whose class earned an opted-in streak auto-allows.
     if (this.graduation?.isPromoted(action, call.name)) return { allowed: true, reason: "graduated" };
@@ -179,7 +193,16 @@ export class ApprovalGate {
       this.saveRemembered(); // durable across restarts (UPGRADES §1)
     }
     this.graduation?.record(action, call.name, ok); // advance/reset the ladder on the human's verdict
+    this.recordDecision(action, call.name, ok);
     return { allowed: ok, reason: ok ? undefined : "user denied" };
+  }
+
+  /** Log the verdict and, on the Nth clean approval of a reversible signature, suggest a grant.
+   * Never self-grants: the human still has to run vishu.autonomy_grant. */
+  private recordDecision(action: ActionClass, signature: string, allowed: boolean): void {
+    if (!this.decisions) return;
+    this.decisions.record({ ts: Date.now(), actionClass: action, signature, allowed });
+    if (allowed && this.suggest && this.decisions.shouldSuggest(action, signature)) this.suggest(action, signature);
   }
 }
 
