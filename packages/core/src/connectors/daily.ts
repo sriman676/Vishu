@@ -95,10 +95,11 @@ export async function processDaily(deps: InboundDeps, msg: InboundMessage): Prom
   let draft: string | undefined;
   if (triage.tier === "needs_action" || triage.tier === "urgent") {
     const ctx = matters.length ? `\n\nRelated open matters:\n${matters.map((m) => `- ${m.body}`).join("\n")}` : "";
+    const voice = deps.voice ? `\n\nWrite in the user's own voice. ${deps.voice}` : "";
     const res = await deps.router.chat({
       model: deps.model,
       messages: [
-        { role: "system", content: "Draft a concise, professional reply to this message. Reply with only the message body." },
+        { role: "system", content: `Draft a concise, professional reply to this message. Reply with only the message body.${voice}` },
         { role: "user", content: `From ${msg.from}:\n${msg.text}${ctx}` },
       ],
       category: "connectors",

@@ -298,9 +298,9 @@ async function serve(): Promise<number> {
     if (gmail.configured) process.stdout.write("[email] Gmail SMTP connector active (app password)\n");
   }
   for (const c of tokenChannels()) connectors.set(c.channel, c); // §11h(ii): telegram/slack/sms when tokens set
-  registerConnectors(registry, { router, model: config.provider.model, memory, bus, runLog: new RunLog() }, connectors);
+  registerConnectors(registry, { router, model: config.provider.model, memory, bus, runLog: new RunLog(), voice: profile.render() }, connectors);
   // §11a inbound: poll Gmail (POP3) → daily-driver, when GMAIL_USER + GMAIL_APP_PASSWORD are set (else no-op).
-  startMailPoll({ router, model: config.provider.model, memory, bus, runLog: new RunLog() }, { seenFile: join(config.paths.workspaceDir, "mail-seen.txt") });
+  startMailPoll({ router, model: config.provider.model, memory, bus, runLog: new RunLog(), voice: profile.render() }, { seenFile: join(config.paths.workspaceDir, "mail-seen.txt") });
   if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) process.stdout.write(`[email] POP3 inbound poll every ${Number(process.env.VISHU_MAIL_POLL_MS) || 120000}ms\n`);
   // MCP sampling: a server's sampling/createMessage runs through our Router and returns an MCP result.
   const sampler: McpSampler = async (params) => {

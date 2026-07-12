@@ -38,6 +38,8 @@ export interface InboundDeps {
   memory: MemoryStore;
   bus: EventBus;
   runLog?: RunLog;
+  /** Rendered identity profile so reply drafts sound like the user ("in your voice"). Optional. */
+  voice?: string;
 }
 
 /** Inbound pipeline: triage → record a task/info note in the vault (skip is dropped) → notify on
