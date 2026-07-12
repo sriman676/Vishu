@@ -58,7 +58,13 @@ export class McpClient {
 
   async start(): Promise<void> {
     this.stopped = false;
-    const child = spawn(this.cmd, this.args, { stdio: ["pipe", "pipe", "pipe"], cwd: this.opts.cwd });
+    // Windows can't spawn a bare command that resolves to a .cmd/.bat (npx, npm) — it throws EINVAL
+    // post-CVE-2024-27980. Route bare names through `cmd /c` (shell:false keeps Node auto-quoting args,
+    // so a spaced arg stays safe). Absolute paths (e.g. node.exe) still spawn directly, unchanged.
+    // ponytail: bare-name heuristic; an absolute path to a .cmd would still need wrapping — rare, skip it.
+    const [cmd, args] =
+      process.platform === "win32" && !/[\\/]/.test(this.cmd) ? ["cmd", ["/c", this.cmd, ...this.args]] : [this.cmd, this.args];
+    const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], cwd: this.opts.cwd });
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (d: string) => this.onData(d));
     child.on("error", (e) => this.failAll(e));

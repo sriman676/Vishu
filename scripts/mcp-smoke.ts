@@ -15,11 +15,9 @@ if (process.env.VISHU_MCP_LIVE !== "1") {
   process.exit(0);
 }
 
-// Windows can't spawn npx.cmd directly (EINVAL post-CVE-2024-27980), so route through cmd /c there.
-const [cmd, pre] = process.platform === "win32" ? ["cmd", ["/c", "npx"]] : ["npx", []];
-
 async function main(): Promise<void> {
-  const client = new McpClient(cmd, [...pre, "-y", "@modelcontextprotocol/server-everything"]);
+  // McpClient handles the Windows bare-command (npx→cmd /c) quirk internally.
+  const client = new McpClient("npx", ["-y", "@modelcontextprotocol/server-everything"]);
   try {
     await client.start();
     const tools = await client.listTools();
