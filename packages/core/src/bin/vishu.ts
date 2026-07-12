@@ -57,6 +57,9 @@ import { makeAsk, terminalPrompt } from "../reliability/ask.js";
 import { AuditLog } from "../security/audit.js";
 import { assertBoot, selfCheck } from "../reliability/selfcheck.js";
 import { DecisionStore, registerDecisions } from "../reliability/autonomy.js";
+import { ApprovalGate } from "../reliability/approvals.js";
+import { buildVishuMcpServer, serveMcpHttp, serveMcpStdio } from "../connectors/mcp-server.js";
+import type { ToolContext } from "../tools/types.js";
 import { isPaused, pause, pauseFile, resume } from "../automation/pause.js";
 import { makePolicy } from "../security/policy.js";
 import { SkillIndex } from "../skills/index.js";
@@ -545,6 +548,35 @@ async function rpc(method: string, paramsJson?: string): Promise<number> {
   return res.error || (res.result && res.result.ok === false) ? 1 : 0;
 }
 
+/** Expose Vishu's tools to any MCP client. Default stdio (client spawns us); `--http [port]` listens on
+ * 127.0.0.1 (bearer token required iff VISHU_MCP_TOKEN is set — "token optional"). Every external call
+ * goes through a fail-closed ApprovalGate, so send/spend/delete/change_setting can never run unattended. */
+async function mcpServe(argv: string[]): Promise<number> {
+  const config = loadConfig();
+  initToken(config.paths.workspaceDir);
+  mkdirSync(config.paths.actionDir, { recursive: true });
+  const tools = registerBuiltins(new ToolRegistry());
+  const skills = new SkillIndex();
+  skills.loadDir(config.paths.skillsDir);
+  registerSkillTools(tools, skills);
+  const memory = new MemoryStore(config.paths.vaultDir, config.paths.memoryDbFile, join(config.paths.workspaceDir, "memory-events.log"));
+  registerMemoryTools(tools, memory, () => ""); // lexical recall (no embedder wired here) over the whole vault
+  const gate = new ApprovalGate("ask_every_time", async () => false, { actionOf: (n) => tools.getAction(n) });
+  const ctx: ToolContext = { policy: makePolicy("full", config.paths.actionDir), terminal: new Terminal(config.paths.actionDir) };
+  const server = buildVishuMcpServer(tools, gate, ctx);
+
+  const httpIdx = argv.indexOf("--http");
+  if (httpIdx >= 0) {
+    const port = Number(argv[httpIdx + 1]) || 8848;
+    const token = process.env.VISHU_MCP_TOKEN || undefined;
+    await serveMcpHttp(server, { port, token });
+    process.stdout.write(`[mcp] HTTP on http://127.0.0.1:${port}${token ? " (bearer token required)" : " (open — localhost only)"}\n`);
+    return 0; // the listening socket keeps the process alive until killed
+  }
+  await serveMcpStdio(server); // stdin handle keeps us alive; the client owns the lifecycle
+  return 0;
+}
+
 async function main(argv: string[]): Promise<number> {
   // Load a .env from the working dir if present (Node 24 native, no dep). Absent → use the real env.
   try {
@@ -618,6 +650,7 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(`${remove ? "untrusted" : "trusted"} ${dir}\n${next.length} trusted repo(s)\n`);
     return 0;
   }
+  if (cmd === "mcp-serve") return mcpServe(argv.slice(1));
   if (cmd === "report") return report(argv[1]);
   if (cmd === "eval") return argv[1] === "swebench" ? sweBenchCmd(argv.slice(2)) : evalCmd(argv[1]);
   if (cmd === "rpc") {
@@ -646,6 +679,7 @@ async function main(argv: string[]): Promise<number> {
       "  vishu eval [runner]          run the eval suite (baseline|effort|moa) + track quality over time",
       "  vishu eval swebench [--limit N] [--file f] [--out p]   SWE-bench Lite: write predictions.jsonl",
       "  vishu rpc <method> [json]    call a method on a running core",
+      "  vishu mcp-serve [--http [port]]  expose Vishu's tools as an MCP server (stdio, or HTTP :8848)",
       "",
     ].join("\n"),
   );
