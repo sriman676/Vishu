@@ -1,4 +1,5 @@
 import { err, ok, type Registry } from "../transport/rpc.js";
+import { processDaily } from "./daily.js";
 import { handleInbound, type InboundDeps } from "./triage.js";
 import type { Connector } from "./types.js";
 
@@ -9,6 +10,14 @@ export function registerConnectors(registry: Registry, deps: InboundDeps, connec
     const p = (params ?? {}) as { channel?: string; from?: string; text?: string; id?: string };
     if (!p.channel || !p.from || !p.text) return err("invalid_params", "channel, from, and text are required");
     return ok(await handleInbound(deps, { channel: p.channel, from: p.from, text: p.text, id: p.id }));
+  });
+
+  // §11a daily-driver: inbound email/message → triage + Matters-match + to-do + a filed reply draft
+  // (never sent; approval + gated `connectors_send` follow). Same deps as inbound; a superset of it.
+  registry.register("vishu.connectors_daily", async (params) => {
+    const p = (params ?? {}) as { channel?: string; from?: string; text?: string; id?: string };
+    if (!p.from || !p.text) return err("invalid_params", "from and text are required");
+    return ok(await processDaily(deps, { channel: p.channel ?? "email", from: p.from, text: p.text, id: p.id }));
   });
 
   registry.register("vishu.connectors_send", async (params) => {

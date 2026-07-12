@@ -21,6 +21,7 @@ import { LocalConnector } from "../connectors/local.js";
 import { McpClient, type McpSampler, registerMcpTools } from "../connectors/mcp.js";
 import { DomainManager, loadDomains } from "../connectors/domains.js";
 import { WebhookConnector } from "../connectors/webhook.js";
+import { StubMailConnector } from "../connectors/daily.js";
 import type { Connector } from "../connectors/types.js";
 import { registerMemory } from "../memory/rpc.js";
 import { MODULES } from "../modules/all.js";
@@ -284,6 +285,7 @@ async function serve(): Promise<number> {
   // Phase 10: connectors — inbound triage + outbound send RPC, MCP servers, realtime SSE stream.
   const connectors = new Map<string, Connector>([["local", new LocalConnector()]]);
   for (const [channel, url] of Object.entries(parseWebhooks())) connectors.set(channel, new WebhookConnector(channel, url));
+  if (!connectors.has("email")) connectors.set("email", new StubMailConnector()); // §11a: email channel (OAuth stubbed)
   registerConnectors(registry, { router, model: config.provider.model, memory, bus, runLog: new RunLog() }, connectors);
   // MCP sampling: a server's sampling/createMessage runs through our Router and returns an MCP result.
   const sampler: McpSampler = async (params) => {
