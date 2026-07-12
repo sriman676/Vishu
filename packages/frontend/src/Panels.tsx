@@ -132,6 +132,47 @@ export function Memory({ token }: { token: string }) {
   );
 }
 
+/** §11g Matters/to-do: recall the vault and show what the daily-driver filed — open Matters and to-dos.
+ * Reuses memory_recall_memories, then splits by record type (matter/todo). */
+export function Matters({ token }: { token: string }) {
+  const [q, setQ] = useState("open matters todo");
+  const [notes, setNotes] = useState<Recalled[]>([]);
+  const search = async () => {
+    if (!q.trim()) return;
+    try {
+      setNotes((await memoryRecall(token, q, 20)).notes.filter((n) => n.type === "matter" || n.type === "todo"));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    }
+  };
+  useEffect(() => {
+    if (token) search();
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+  const group = (t: string) => notes.filter((n) => n.type === t);
+  return (
+    <div style={box}>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input className="input" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} />
+        <button className="btn" onClick={search}>Recall</button>
+      </div>
+      {notes.length === 0 && <div style={{ color: "#888" }}>No matters or to-dos filed yet — triage a message in Inbox to file some.</div>}
+      {(["matter", "todo"] as const).map((t) =>
+        group(t).length === 0 ? null : (
+          <div key={t}>
+            <div style={{ color: "var(--accent)", fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, margin: "4px 0" }}>{t === "matter" ? "Matters" : "To-dos"}</div>
+            {group(t).map((n) => (
+              <div key={n.name} className="card" style={{ marginBottom: 8 }}>
+                <div style={{ color: "#8aa", fontSize: 12, marginBottom: 4 }}>{n.name}</div>
+                <div style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{n.body}</div>
+              </div>
+            ))}
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
+
 /** Settings: active provider/model/key-mode + pool, and the preset model list for the switcher. */
 export function Settings({ token, model, setModel }: { token: string; model: string; setModel: (m: string) => void }) {
   const [cfg, setCfg] = useState<ConfigSummary>();
