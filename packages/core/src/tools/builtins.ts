@@ -119,6 +119,70 @@ const webSearch: Tool = {
   },
 };
 
+/** Pull absolute, same-origin-resolvable hrefs out of raw HTML (hash-only anchors dropped). */
+function extractLinks(html: string, base: string): string[] {
+  const out: string[] = [];
+  for (const m of html.matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"'#][^"']*)["']/gi)) {
+    try {
+      out.push(new URL(m[1]!, base).toString());
+    } catch {
+      /* skip un-parseable href */
+    }
+  }
+  return out;
+}
+
+const webCrawl: Tool = {
+  name: "web_crawl",
+  description: "Crawl a site from a start URL, following same-origin links breadth-first up to page/depth caps; returns each page as markdown.",
+  meta: { action: "read" }, // GET-only; every fetched host is egress-checked + logged like web_fetch
+  parameters: {
+    type: "object",
+    properties: {
+      url: { type: "string" },
+      maxPages: { type: "number", description: "max pages to fetch (default 10, hard cap 50)" },
+      maxDepth: { type: "number", description: "link-follow depth from the start URL (default 2)" },
+    },
+    required: ["url"],
+  },
+  // ponytail: same-origin BFS, no robots.txt and no JS rendering. Add a per-host throttle + robots
+  // respect before crawling foreign sites at volume; add a headless renderer only if SPAs need it.
+  async run(args) {
+    const start = str(args.url, "url");
+    const maxPages = Math.min(Math.max(1, Math.floor(Number(args.maxPages ?? 10)) || 10), 50);
+    const maxDepth = Math.max(0, Math.floor(Number(args.maxDepth ?? 2)) || 0);
+    const origin = new URL(start).origin;
+    const seen = new Set<string>([start]);
+    const queue: { url: string; depth: number }[] = [{ url: start, depth: 0 }];
+    const pages: string[] = [];
+    while (queue.length && pages.length < maxPages) {
+      const { url, depth } = queue.shift()!;
+      const warn = egressWarn("web_crawl", url);
+      let body: string;
+      try {
+        body = await (await fetch(url)).text();
+      } catch (e) {
+        pages.push(`## ${url}\n${warn}[web_crawl] fetch failed: ${(e as Error).message}`);
+        continue;
+      }
+      if (guardInjection(body) === "block") {
+        pages.push(`## ${url}\n${warn}[web_crawl] content blocked by injection guard`);
+        continue;
+      }
+      pages.push(`## ${url}\n${warn}${clip(htmlToMarkdown(body), 8_000)}`);
+      if (depth < maxDepth) {
+        for (const href of extractLinks(body, url)) {
+          if (href.startsWith(origin) && !seen.has(href) && seen.size < maxPages * 8) {
+            seen.add(href);
+            queue.push({ url: href, depth: depth + 1 });
+          }
+        }
+      }
+    }
+    return pages.join("\n\n---\n\n");
+  },
+};
+
 const retrieveOriginalTool: Tool = {
   name: "retrieve_original",
   description: "Retrieve the full, uncompressed output that was elided from an earlier compressed tool result, by its ref.",
@@ -130,6 +194,6 @@ const retrieveOriginalTool: Tool = {
 };
 
 export function registerBuiltins(registry: ToolRegistry): ToolRegistry {
-  [readFile, writeFile, listDir, runShell, webFetch, webSearch, retrieveOriginalTool, ...pauseTools].forEach((t) => registry.register(t));
+  [readFile, writeFile, listDir, runShell, webFetch, webSearch, webCrawl, retrieveOriginalTool, ...pauseTools].forEach((t) => registry.register(t));
   return registry;
 }
