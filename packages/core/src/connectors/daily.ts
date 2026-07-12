@@ -81,6 +81,10 @@ export async function processDaily(deps: InboundDeps, msg: InboundMessage): Prom
   const triage = await handleInbound(deps, msg);
   if (triage.tier === "skip") return { triage, matters: [], task: null };
 
+  // Contact graph (Alfred parity): upsert one `person` record per sender, superseded on each new mail so
+  // recall/Matters gain a who's-who over time. Subject-keyed → no duplicates.
+  await deps.memory.put({ type: "person", subject: `person-${msg.from}`, folder: "people", content: `[[${msg.from}]] — last seen on ${msg.channel}: ${triage.summary}` });
+
   const matters = await matchMatters(deps.memory, msg.text);
   const task = await extractTask(deps.router, deps.model, msg.text);
   if (task) {
