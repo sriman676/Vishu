@@ -63,6 +63,9 @@ const PRESETS: Record<string, { type: ProviderType; baseUrl: string; model: stri
   xai: { type: "openai", baseUrl: "https://api.x.ai/v1", model: "grok-2-latest" },
   perplexity: { type: "openai", baseUrl: "https://api.perplexity.ai", model: "sonar" },
   cohere: { type: "openai", baseUrl: "https://api.cohere.ai/compatibility/v1", model: "command-r" },
+  // Local Qwen3 on Intel Arc via IPEX-LLM's Ollama portable (OpenAI-compatible at :11434/v1). Offline,
+  // credential-free — any VISHU_API_KEY value works (Ollama ignores it). See scripts/setup-intel-llm.ps1.
+  intel: { type: "openai", baseUrl: "http://127.0.0.1:11434/v1", model: "qwen3:8b" },
 };
 
 /** Largest generally-available NVIDIA NIM model — the default "expert"/builder brain (decision
