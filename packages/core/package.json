@@ -22,5 +22,8 @@
     "@scure/base": "^2.2.0",
     "typescript": "^5.9.0",
     "viem": "^2.53.1"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.48.0"
   }
 }
