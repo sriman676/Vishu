@@ -3,6 +3,7 @@ import type { Autonomy } from "../reliability/approvals.js";
 import type { RunLog } from "../reliability/runlog.js";
 import type { DomainEvent, EventBus } from "../transport/events.js";
 import type { SchedulerGate } from "./gate.js";
+import { resumeIncomplete, runWorkflowDurable, type RunStore } from "./runs.js";
 import { runWorkflow, type StepRunner, type WorkflowStore } from "./workflows.js";
 
 /** What makes a trigger fire. */
@@ -29,6 +30,9 @@ export interface TriggerDeps {
   isPaused?: () => boolean;
   tickMs?: number; // cron heartbeat (default 5s)
   runLog?: RunLog;
+  /** Durable runs (§11e): when set, firings checkpoint per-step and interrupted runs resume on start().
+   * Absent → in-memory runWorkflow (a restart re-runs from the top, the prior behavior). */
+  runStore?: RunStore;
 }
 
 /** Proactive automation: a 5s cron tick fires due schedule triggers; EventBus and file-watch triggers
@@ -75,6 +79,8 @@ export class TriggerManager {
   }
 
   start(): void {
+    // §11e: pick up any run interrupted by the last shutdown before the cron begins firing new ones.
+    if (this.deps.runStore) void resumeIncomplete(this.deps.runStore, (n) => this.deps.store.get(n), this.deps.run);
     this.timer ??= setInterval(() => this.tick(), this.deps.tickMs ?? 5000);
   }
 
@@ -108,7 +114,9 @@ export class TriggerManager {
     }
     this.deps.runLog?.log("trigger_fire", `${trigger.id} → ${wf.name}${cause ? ` (${cause.domain}/${cause.type})` : ""}`);
     try {
-      const outputs = await runWorkflow(wf, this.deps.run);
+      const outputs = this.deps.runStore
+        ? (await runWorkflowDurable(wf, this.deps.run, this.deps.runStore)).outputs // §11e durable + resumable
+        : await runWorkflow(wf, this.deps.run);
       this.deps.bus.publish({ domain: "system", type: "notification", payload: { trigger: trigger.id, workflow: wf.name, outputs } });
     } catch (e) {
       this.deps.runLog?.log("trigger_error", `${trigger.id}: ${e instanceof Error ? e.message : String(e)}`);
