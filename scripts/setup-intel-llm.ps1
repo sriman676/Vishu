@@ -14,12 +14,15 @@ $ErrorActionPreference = "Stop"
 
 $exe = Join-Path $InstallDir "ollama.exe"
 if (-not (Test-Path $exe)) {
-  Write-Host "[1/4] Resolving latest IPEX-LLM Ollama portable (Windows) from GitHub releases..."
-  $rel = Invoke-RestMethod "https://api.github.com/repos/intel/ipex-llm/releases?per_page=30" -Headers @{ "User-Agent" = "vishu-setup" }
-  $asset = $rel.assets + ($rel | ForEach-Object { $_.assets }) |
-    Where-Object { $_.name -match '^ollama.*win.*\.zip$' } |
+  Write-Host "[1/4] Resolving latest IPEX-LLM Ollama portable (Windows)..."
+  # The portable zips live on ipex-llm/ipex-llm under the rolling v2.3.0-nightly tag (the intel/ipex-llm
+  # mirror was archived Jan 2026 and carries no ollama assets). Pick the newest ollama-*-win.zip by name.
+  $rel = Invoke-RestMethod "https://api.github.com/repos/ipex-llm/ipex-llm/releases/tags/v2.3.0-nightly" -Headers @{ "User-Agent" = "vishu-setup" }
+  $asset = $rel.assets |
+    Where-Object { $_.name -match '^ollama-ipex-llm-.*-win\.zip$' } |
+    Sort-Object name -Descending |
     Select-Object -First 1
-  if (-not $asset) { throw "No 'ollama-*-win.zip' asset found in the last 30 ipex-llm releases. Check https://github.com/intel/ipex-llm/releases and download manually." }
+  if (-not $asset) { throw "No 'ollama-ipex-llm-*-win.zip' on ipex-llm/ipex-llm v2.3.0-nightly. Check https://github.com/ipex-llm/ipex-llm/releases and download manually." }
   $zip = Join-Path $env:TEMP $asset.name
   Write-Host "      -> $($asset.name) ($([math]::Round($asset.size/1MB)) MB)"
   Invoke-WebRequest $asset.browser_download_url -OutFile $zip
