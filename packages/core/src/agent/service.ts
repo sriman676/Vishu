@@ -1,6 +1,7 @@
 import type { Router } from "../providers/router.js";
 import type { ChatMessage } from "../providers/types.js";
 import { ApprovalGate, type AskFn, type Autonomy } from "../reliability/approvals.js";
+import { type Graduation, graduationFromEnv } from "../reliability/graduation.js";
 import type { RunLog } from "../reliability/runlog.js";
 import type { AuditLog } from "../security/audit.js";
 import type { SecurityPolicy } from "../security/policy.js";
@@ -37,6 +38,9 @@ export interface AgentDeps {
   sendCapFile?: string;
   /** Max send-class actions per day (default 30). */
   sendCap?: number;
+  /** Progressive-autonomy ladder (UPGRADES §11d). Absent → built from env (VISHU_GRADUATE*); still
+   * undefined when unset, so nothing graduates and every ask stays an ask. */
+  graduation?: Graduation;
 }
 
 export interface TurnResult {
@@ -64,6 +68,7 @@ export class AgentService {
       rememberFile: deps.rememberFile,
       sendCapFile: deps.sendCapFile,
       sendCap: deps.sendCap,
+      graduation: deps.graduation ?? graduationFromEnv(), // §11d: opt-in classes graduate ask→auto
     });
   }
 

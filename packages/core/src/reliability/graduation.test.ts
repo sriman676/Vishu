@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { ActionClass } from "../security/actions.js";
 import { ApprovalGate } from "./approvals.js";
-import { Graduation } from "./graduation.js";
+import { Graduation, graduationFromEnv } from "./graduation.js";
 
 const call = (name: string, args: Record<string, unknown> = {}) => ({ id: "1", name, arguments: args });
 const actionOf = (m: Record<string, ActionClass>) => (n: string) => m[n] ?? "write";
@@ -84,6 +84,18 @@ test("send graduation still honors the daily cap (§11d + F7)", async () => {
   assert.equal(third.allowed, false, "cap wins even over a graduated send");
   assert.match(third.reason ?? "", /daily send cap/);
   assert.equal(asks, 1, "only the first prompted — the rest graduated (or capped)");
+});
+
+test("graduationFromEnv: unset → undefined; opt-in classes parsed, unknowns dropped (§11d)", () => {
+  assert.equal(graduationFromEnv({}), undefined, "no VISHU_GRADUATE → nothing graduates");
+  assert.equal(graduationFromEnv({ VISHU_GRADUATE: "  " }), undefined, "blank → undefined");
+  assert.equal(graduationFromEnv({ VISHU_GRADUATE: "bogus,nope" }), undefined, "all-unknown → undefined");
+  const g = graduationFromEnv({ VISHU_GRADUATE: "write, send, bogus", VISHU_GRADUATE_N: "2" })!;
+  assert.ok(g, "valid classes → a Graduation");
+  g.record("write", "run_shell", true);
+  g.record("write", "run_shell", true);
+  assert.equal(g.isPromoted("write", "run_shell"), true, "opted-in + threshold met");
+  assert.equal(g.isPromoted("delete", "rm"), false, "a class not opted in never graduates");
 });
 
 test("the ladder survives restart via its persist file (§11d)", async () => {
