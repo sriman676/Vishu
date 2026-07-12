@@ -23,6 +23,7 @@ import { McpClient, type McpSampler, registerMcpTools } from "../connectors/mcp.
 import { DomainManager, loadDomains } from "../connectors/domains.js";
 import { WebhookConnector } from "../connectors/webhook.js";
 import { StubMailConnector } from "../connectors/daily.js";
+import { GmailConnector } from "../connectors/gmail.js";
 import { tokenChannels } from "../connectors/channels.js";
 import type { Connector } from "../connectors/types.js";
 import { registerMemory } from "../memory/rpc.js";
@@ -288,7 +289,13 @@ async function serve(): Promise<number> {
   // Phase 10: connectors — inbound triage + outbound send RPC, MCP servers, realtime SSE stream.
   const connectors = new Map<string, Connector>([["local", new LocalConnector()]]);
   for (const [channel, url] of Object.entries(parseWebhooks())) connectors.set(channel, new WebhookConnector(channel, url));
-  if (!connectors.has("email")) connectors.set("email", new StubMailConnector()); // §11a: email channel (OAuth stubbed)
+  // §11a email channel: real Gmail (app-password SMTP) when GMAIL_USER + GMAIL_APP_PASSWORD are set, else
+  // the stub that throws loudly. Send stays behind the F0 send-class gate at the RPC layer.
+  if (!connectors.has("email")) {
+    const gmail = new GmailConnector();
+    connectors.set("email", gmail.configured ? gmail : new StubMailConnector());
+    if (gmail.configured) process.stdout.write("[email] Gmail SMTP connector active (app password)\n");
+  }
   for (const c of tokenChannels()) connectors.set(c.channel, c); // §11h(ii): telegram/slack/sms when tokens set
   registerConnectors(registry, { router, model: config.provider.model, memory, bus, runLog: new RunLog() }, connectors);
   // MCP sampling: a server's sampling/createMessage runs through our Router and returns an MCP result.
