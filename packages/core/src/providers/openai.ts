@@ -1,3 +1,4 @@
+import { isQwen3, makeThinkFilter, stripThink, withNoThink } from "./qwen3.js";
 import { statusError } from "./transient.js";
 import type { ChatMessage, ChatRequest, ChatResponse, OnDelta, Provider, ToolCall } from "./types.js";
 
@@ -61,9 +62,10 @@ export class OpenAICompatibleProvider implements Provider {
 
   private body(req: ChatRequest, stream: boolean): string {
     const tools = req.tools?.map((t) => ({ type: "function", function: t }));
+    const messages = isQwen3(req.model) ? withNoThink(req.messages) : req.messages;
     return JSON.stringify({
       model: req.model,
-      messages: req.messages.map(toOpenAIMessage),
+      messages: messages.map(toOpenAIMessage),
       tools,
       // NIM's llama models reject parallel tool-calls ("only supports single tool-calls at once");
       // force one-at-a-time whenever tools are offered. Harmless on providers that allow parallel.
@@ -84,8 +86,9 @@ export class OpenAICompatibleProvider implements Provider {
     const json = (await res.json()) as { choices?: OAChoice[]; usage?: { prompt_tokens?: number; completion_tokens?: number } };
     const choice = json.choices?.[0];
     const toolCalls = parseToolCalls(choice?.message);
+    const raw = choice?.message?.content ?? "";
     return {
-      content: choice?.message?.content ?? "",
+      content: isQwen3(req.model) ? stripThink(raw) : raw,
       toolCalls,
       finish: toolCalls ? "tool_calls" : choice?.finish_reason === "length" ? "length" : "stop",
       usage: json.usage ? { promptTokens: json.usage.prompt_tokens ?? 0, completionTokens: json.usage.completion_tokens ?? 0 } : undefined,
@@ -103,6 +106,8 @@ export class OpenAICompatibleProvider implements Provider {
 
     let content = "";
     let finish: ChatResponse["finish"] = "stop";
+    const qwen = isQwen3(req.model);
+    const filter = qwen ? makeThinkFilter() : null;
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -121,12 +126,13 @@ export class OpenAICompatibleProvider implements Provider {
         const delta = choice?.delta?.content;
         if (delta) {
           content += delta;
-          onDelta(delta);
+          const visible = filter ? filter(delta) : delta;
+          if (visible) onDelta(visible);
         }
         if (choice?.finish_reason === "length") finish = "length";
       }
     }
-    return { content, finish };
+    return { content: qwen ? stripThink(content) : content, finish };
   }
 
   async embed(texts: string[]): Promise<number[][]> {
