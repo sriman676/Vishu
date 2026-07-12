@@ -47,6 +47,18 @@ export interface Recalled { name: string; type: string; body: string; score: num
 export const memoryRecall = (token: string, query: string, limit = 8) =>
   rpc<{ notes: Recalled[]; text: string }>(token, "vishu.memory_recall_memories", { query, limit });
 
+// §11a daily-driver: triage a pasted message → tier/summary + matched matters + extracted to-do + filed draft.
+export type Tier = "skip" | "info" | "urgent" | "needs_action";
+export interface DailyResult {
+  triage: { summary: string; tier: Tier };
+  matters: { name: string; body: string; score: number }[];
+  task: { task: string; due?: string } | null;
+  draft?: string;
+}
+export const connectorsDaily = (token: string, msg: { channel?: string; from: string; text: string; id?: string }) =>
+  rpc<DailyResult>(token, "vishu.connectors_daily", msg);
+export const dailyBriefing = (token: string) => rpc<{ briefing: string }>(token, "vishu.daily_briefing");
+
 export interface CategoryStat {
   category: string;
   calls: number;

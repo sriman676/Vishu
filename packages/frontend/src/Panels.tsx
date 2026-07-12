@@ -1,7 +1,67 @@
 import { useEffect, useState } from "react";
-import { configSummary, type ConfigSummary, evalRun, type EvalReport, type EvalTrend, memoryRecall, type Recalled } from "./api.js";
+import { configSummary, type ConfigSummary, connectorsDaily, type DailyResult, dailyBriefing, evalRun, type EvalReport, type EvalTrend, memoryRecall, type Recalled } from "./api.js";
 
 const box: React.CSSProperties = { flex: 1, overflowY: "auto", padding: "var(--space-lg)", display: "flex", flexDirection: "column", gap: "var(--space-md)" };
+
+const TIER_COLOR: Record<string, string> = { urgent: "var(--danger)", needs_action: "var(--accent)", info: "#8aa", skip: "#888" };
+
+/** §11g Inbox/triage: paste an inbound message → connectors_daily triages it, matches Matters, files a to-do
+ * and a reply draft (never sent). Also fires the one-shot daily briefing. */
+export function Inbox({ token }: { token: string }) {
+  const [from, setFrom] = useState("");
+  const [text, setText] = useState("");
+  const [res, setRes] = useState<DailyResult>();
+  const [brief, setBrief] = useState<string>();
+  const [busy, setBusy] = useState("");
+  const triage = async () => {
+    if (!from.trim() || !text.trim()) return;
+    setBusy("triage");
+    try {
+      setRes(await connectorsDaily(token, { from: from.trim(), text: text.trim() }));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  };
+  const briefing = async () => {
+    setBusy("brief");
+    try {
+      setBrief((await dailyBriefing(token)).briefing || "Quiet day — nothing to surface.");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  };
+  return (
+    <div style={box}>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input className="input" placeholder="from (sender)" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <button className="btn" disabled={!!busy} onClick={briefing}>{busy === "brief" ? "…" : "Daily briefing"}</button>
+      </div>
+      <textarea className="input" style={{ minHeight: 90, fontFamily: "inherit" }} placeholder="paste the message to triage…" value={text} onChange={(e) => setText(e.target.value)} />
+      <button className="btn primary" disabled={!!busy || !from.trim() || !text.trim()} onClick={triage}>{busy === "triage" ? "triaging…" : "Triage"}</button>
+      {brief && <div className="card" style={{ whiteSpace: "pre-wrap" }}>{brief}</div>}
+      {res && (
+        <div className="card">
+          <div style={{ color: TIER_COLOR[res.triage.tier] ?? "#8aa", fontWeight: 600 }}>{res.triage.tier.toUpperCase()}</div>
+          <div style={{ marginTop: 4 }}>{res.triage.summary}</div>
+          {res.task && <div style={{ marginTop: 8 }}>📋 to-do: <strong>{res.task.task}</strong>{res.task.due ? ` (due: ${res.task.due})` : ""}</div>}
+          {res.matters.length > 0 && (
+            <div style={{ marginTop: 8, fontSize: 12, color: "#8aa" }}>related matters: {res.matters.map((m) => m.name).join(", ")}</div>
+          )}
+          {res.draft && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 12, color: "#8aa" }}>filed reply draft (not sent):</div>
+              <div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{res.draft}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Eval dashboard: run a runner against the suite, show pass-rate + per-task + trend (vishu.eval_run). */
 export function Eval({ token }: { token: string }) {
