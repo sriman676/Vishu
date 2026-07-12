@@ -173,6 +173,40 @@ export function Matters({ token }: { token: string }) {
   );
 }
 
+/** §11g Calendar: no live calendar until a token is wired (StubCalendar throws), so this shows the
+ * connect-a-token placeholder plus any to-dos that carry a due date (the daily-driver writes them as
+ * "… (due: <when>)"). ponytail: parse the due out of the note body — no calendar API until creds land. */
+export function Calendar({ token }: { token: string }) {
+  const [due, setDue] = useState<{ name: string; text: string; when: string }[]>([]);
+  useEffect(() => {
+    if (!token) return;
+    memoryRecall(token, "todo due date", 20)
+      .then((r) =>
+        setDue(
+          r.notes
+            .filter((n) => n.type === "todo")
+            .map((n) => ({ name: n.name, text: n.body, when: /due:\s*([^)\n]+)/i.exec(n.body)?.[1]?.trim() ?? "" }))
+            .filter((d) => d.when),
+        ),
+      )
+      .catch(() => {});
+  }, [token]);
+  return (
+    <div style={box}>
+      <div className="card" style={{ color: "#8aa" }}>
+        📅 No calendar connected. Set <code>VISHU_GCAL_TOKEN</code> (or <code>VISHU_OUTLOOK_TOKEN</code>) to sync live events. Until then, dated to-dos appear below.
+      </div>
+      {due.length === 0 && <div style={{ color: "#888" }}>No dated to-dos yet.</div>}
+      {due.map((d) => (
+        <div key={d.name} className="card">
+          <div style={{ color: "var(--accent)", fontSize: 12 }}>due: {d.when}</div>
+          <div style={{ whiteSpace: "pre-wrap", fontSize: 13, marginTop: 4 }}>{d.text}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Settings: active provider/model/key-mode + pool, and the preset model list for the switcher. */
 export function Settings({ token, model, setModel }: { token: string; model: string; setModel: (m: string) => void }) {
   const [cfg, setCfg] = useState<ConfigSummary>();

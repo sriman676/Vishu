@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { startTurn, subscribeEvents } from "./api.js";
-import { Eval, Inbox, Matters, Memory, Settings } from "./Panels.js";
+import { Calendar, Eval, Inbox, Matters, Memory, Settings } from "./Panels.js";
 import { Tokens } from "./Tokens.js";
 
-type Tab = "chat" | "inbox" | "matters" | "notifications" | "tokens" | "eval" | "memory" | "settings";
+type Tab = "chat" | "inbox" | "matters" | "calendar" | "notifications" | "tokens" | "eval" | "memory" | "settings";
 
 interface Msg {
   role: "user" | "assistant" | "error";
@@ -91,7 +91,7 @@ export function App() {
       <header style={S.header}>
         <strong style={{ fontSize: 18, letterSpacing: "-0.02em", color: "var(--accent)", fontFamily: "var(--font-display)" }}>Vishu</strong>
         <nav style={S.tabs}>
-          {(["chat", "inbox", "matters", "notifications", "tokens", "eval", "memory", "settings"] as Tab[]).map((t) => (
+          {(["chat", "inbox", "matters", "calendar", "notifications", "tokens", "eval", "memory", "settings"] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? "btn on" : "btn"} onClick={() => setTab(t)} disabled={t !== "chat" && !token}>
               {t === "notifications" ? `Notifications${notifs.length > seen ? ` (${notifs.length - seen})` : ""}` : t[0].toUpperCase() + t.slice(1)}
             </button>
@@ -109,6 +109,7 @@ export function App() {
 
       {tab === "inbox" && <Inbox token={token} />}
       {tab === "matters" && <Matters token={token} />}
+      {tab === "calendar" && <Calendar token={token} />}
       {tab === "tokens" && <Tokens token={token} />}
       {tab === "eval" && <Eval token={token} />}
       {tab === "memory" && <Memory token={token} />}
