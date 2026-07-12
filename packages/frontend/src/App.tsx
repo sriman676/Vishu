@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { type Mode, modeActivate, modeList, startTurn, subscribeEvents } from "./api.js";
+import { Orb } from "./Orb.js";
 import { Activity, Calendar, Eval, Inbox, Matters, Memory, Settings } from "./Panels.js";
 import { Tokens } from "./Tokens.js";
 
@@ -125,6 +126,7 @@ export function App() {
     <div style={S.page}>
       <header style={S.header}>
         <strong style={{ fontSize: 18, letterSpacing: "-0.02em", color: "var(--accent)", fontFamily: "var(--font-display)" }}>Vishu</strong>
+        <Orb />
         <nav style={S.tabs}>
           {(["chat", "inbox", "matters", "calendar", "activity", "notifications", "tokens", "eval", "memory", "settings"] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? "btn on" : "btn"} onClick={() => setTab(t)} disabled={t !== "chat" && !token}>
