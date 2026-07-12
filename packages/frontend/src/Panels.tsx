@@ -207,6 +207,51 @@ export function Calendar({ token }: { token: string }) {
   );
 }
 
+/** §9 Activity dashboard: the SSE bus as a categorized live feed. Sorts each event into gate / trigger /
+ * sync / notification by its domain/type/payload, colours it, and shows a per-category count. */
+type Cat = "gate" | "trigger" | "sync" | "notification" | "other";
+const CAT_COLOR: Record<Cat, string> = { gate: "#c58af9", trigger: "#7aa2f7", sync: "#7c7", notification: "#e0af68", other: "#888" };
+function categorize(raw: string): { cat: Cat; text: string } {
+  let e: { domain?: string; type?: string; payload?: Record<string, unknown> } = {};
+  try {
+    e = JSON.parse(raw);
+  } catch {
+    return { cat: "other", text: raw };
+  }
+  const p = e.payload ?? {};
+  let cat: Cat = "other";
+  if (e.domain === "tool" && e.type === "sync") cat = "sync";
+  else if ("trigger" in p) cat = "trigger";
+  else if ("decision" in p || "gate" in p || "action" in p || "approval" in p) cat = "gate";
+  else if (e.type === "notification") cat = "notification";
+  return { cat, text: raw };
+}
+
+export function Activity({ events }: { events: string[] }) {
+  const items = events.map(categorize);
+  const counts = items.reduce<Record<string, number>>((a, { cat }) => ((a[cat] = (a[cat] ?? 0) + 1), a), {});
+  return (
+    <div style={box}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        {(["gate", "trigger", "sync", "notification", "other"] as Cat[]).map((c) => (
+          <span key={c} className="card" style={{ padding: "4px 10px", fontSize: 12, borderLeft: `3px solid ${CAT_COLOR[c]}` }}>
+            {c}: <strong>{counts[c] ?? 0}</strong>
+          </span>
+        ))}
+      </div>
+      {items.length === 0 && <div style={{ color: "#888" }}>No activity yet — gate decisions, triggers, tool syncs, and notifications stream here live.</div>}
+      {items
+        .slice()
+        .reverse()
+        .map((it, i) => (
+          <div key={i} style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, padding: "4px 8px", borderLeft: `3px solid ${CAT_COLOR[it.cat]}`, wordBreak: "break-all" }}>
+            {it.text}
+          </div>
+        ))}
+    </div>
+  );
+}
+
 /** Settings: active provider/model/key-mode + pool, and the preset model list for the switcher. */
 export function Settings({ token, model, setModel }: { token: string; model: string; setModel: (m: string) => void }) {
   const [cfg, setCfg] = useState<ConfigSummary>();
