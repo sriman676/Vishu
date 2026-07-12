@@ -7,7 +7,7 @@ import { MemoryStore } from "../memory/store.js";
 import { ScriptedProvider } from "../providers/mock.js";
 import { Router } from "../providers/router.js";
 import { EventBus } from "../transport/events.js";
-import { openMatter, matchMatters, parseTask, processDaily, StubMailConnector, StubCalendar } from "./daily.js";
+import { buildBriefing, openMatter, matchMatters, parseTask, processDaily, StubMailConnector, StubCalendar } from "./daily.js";
 
 test("parseTask: reads TASK/DUE, returns null when the model says none", () => {
   assert.deepEqual(parseTask("TASK: send the invoice\nDUE: 2026-07-20"), { task: "send the invoice", due: "2026-07-20" });
@@ -53,6 +53,18 @@ test("processDaily: triages, files a to-do, drafts a reply into the draft lane o
   assert.ok(notes.some((n) => (n as { kind?: string }).kind === "draft_ready"));
   assert.match((await memory.recall("Q3 report todo")).text, /\[ \] send the Q3 report/); // to-do filed
   assert.match((await memory.recall("reply draft Q3")).text, /I'll get the Q3 report/); // draft filed, not sent
+  memory.close();
+});
+
+test("buildBriefing: digests open to-dos/matters into one message, empty on a quiet day", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "vishu-brief-"));
+  const memory = new MemoryStore(join(dir, "vault"), join(dir, "mem.db"));
+  const router = new Router([new ScriptedProvider([{ content: "You have 1 to-do: send the Q3 report.", finish: "stop" }])]);
+  assert.equal(await buildBriefing(memory, router, "mock"), ""); // nothing filed yet → quiet
+
+  await memory.put({ type: "todo", subject: "t1", content: "- [ ] send the Q3 report (due: Friday)" });
+  const brief = await buildBriefing(memory, router, "mock");
+  assert.match(brief, /Q3 report/);
   memory.close();
 });
 

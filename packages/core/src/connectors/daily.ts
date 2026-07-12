@@ -118,6 +118,34 @@ export async function processDaily(deps: InboundDeps, msg: InboundMessage): Prom
   return { triage, matters, task, draft };
 }
 
+/** §11h(iii) proactive daily briefing: digest the day's open signals (to-dos, reply drafts, open Matters,
+ * recent inbound) into ONE short spoken/written message. Reuses the memory the daily-driver already files
+ * — no new store. Returns "" when there's nothing worth surfacing (so a trigger stays quiet on an empty
+ * day). ponytail: recall over the record-types 11a writes, one LLM digest pass; a saved TriggerManager
+ * workflow can call this on a schedule (the trigger machinery already exists). */
+export async function buildBriefing(memory: MemoryStore, router: Router, model: string): Promise<string> {
+  const signals: string[] = [];
+  for (const [label, query, folder] of [
+    ["To-dos", "todo task due", undefined],
+    ["Reply drafts", "reply draft awaiting", DRAFTS],
+    ["Open matters", "matter ongoing", MATTERS],
+  ] as const) {
+    const { notes } = await memory.recall(query, { folder, limit: 5 });
+    const rows = notes.filter((n) => n.type === (label === "To-dos" ? "todo" : label === "Reply drafts" ? "draft" : "matter"));
+    if (rows.length) signals.push(`${label}:\n${rows.map((n) => `- ${n.body.split("\n")[0]}`).join("\n")}`);
+  }
+  if (!signals.length) return ""; // quiet day — nothing to surface
+  const res = await router.chat({
+    model,
+    messages: [
+      { role: "system", content: "Summarize today's open items into a brief, friendly daily briefing (max 6 lines). Lead with what needs action." },
+      { role: "user", content: signals.join("\n\n") },
+    ],
+    category: "connectors",
+  });
+  return res.content.trim();
+}
+
 /** Stub email connector: same `Connector` seam as WebhookConnector/LocalConnector. Real Gmail/Outlook slot
  * their SDK + OAuth token here. Until then `send` throws so a misconfigured lane surfaces loudly.
  * Env slots (documented in .env.example): VISHU_GMAIL_TOKEN or VISHU_OUTLOOK_TOKEN. */

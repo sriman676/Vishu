@@ -1,5 +1,5 @@
 import { err, ok, type Registry } from "../transport/rpc.js";
-import { processDaily } from "./daily.js";
+import { buildBriefing, processDaily } from "./daily.js";
 import { handleInbound, type InboundDeps } from "./triage.js";
 import type { Connector } from "./types.js";
 
@@ -19,6 +19,9 @@ export function registerConnectors(registry: Registry, deps: InboundDeps, connec
     if (!p.from || !p.text) return err("invalid_params", "from and text are required");
     return ok(await processDaily(deps, { channel: p.channel ?? "email", from: p.from, text: p.text, id: p.id }));
   });
+
+  // §11h(iii): one-shot daily briefing over the day's filed signals (empty string = quiet day).
+  registry.register("vishu.daily_briefing", async () => ok({ briefing: await buildBriefing(deps.memory, deps.router, deps.model) }));
 
   registry.register("vishu.connectors_send", async (params) => {
     const p = (params ?? {}) as { channel?: string; to?: string; text?: string };
