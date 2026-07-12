@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -20,6 +20,23 @@ test("health_snapshot round-trips over RPC with a valid token", async () => {
 
     const missing = await rpcCall(base, token, "vishu.nope");
     assert.equal(missing.error?.code, -32601);
+  } finally {
+    await server.close();
+  }
+});
+
+test("static UI: serves the web root (index fallback) and blocks path traversal", async () => {
+  const root = mkdtempSync(join(tmpdir(), "vishu-web-"));
+  writeFileSync(join(root, "index.html"), "<b>vishu ui</b>");
+  const server = await startServer(buildRegistry("9.9.9", 0), "127.0.0.1", 0, undefined, undefined, root);
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    const index = await fetch(`${base}/`);
+    assert.equal(index.status, 200);
+    assert.match(await index.text(), /vishu ui/); // "/" → index.html
+    assert.equal((await fetch(`${base}/style.css`)).status, 404); // missing asset → 404, not a crash
+    const escape = await fetch(`${base}/../../etc/passwd`);
+    assert.equal(escape.status, 404); // traversal blocked
   } finally {
     await server.close();
   }

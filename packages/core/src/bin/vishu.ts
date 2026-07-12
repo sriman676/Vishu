@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { registerAgent, registerAgentQueue } from "../agent/rpc.js";
 import { AgentQueue } from "../agent/queue.js";
@@ -310,7 +311,10 @@ async function serve(): Promise<number> {
   if (modulesOn.length) process.stdout.write(`[modules] enabled: ${modulesOn.join(", ")}\n`);
 
   const corsOrigins = process.env.VISHU_CORS_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean);
-  const running = await startServer(registry, host(), config.port, bus, corsOrigins);
+  // 11g: also serve the built web UI (packages/frontend Vite output) over the same port so it opens in a
+  // plain browser, not only the Tauri shell. VISHU_WEBROOT overrides; missing dist just 404s (core fine).
+  const webRoot = process.env.VISHU_WEBROOT ?? fileURLToPath(new URL("../../../frontend/dist", import.meta.url));
+  const running = await startServer(registry, host(), config.port, bus, corsOrigins, webRoot);
   const base = `http://${host()}:${running.port}`;
   process.stdout.write(`[serve] vishu ${version()} on ${base}\n`);
   process.stdout.write(`[serve] token: ${join(config.paths.workspaceDir, "core.token")}\n`);
