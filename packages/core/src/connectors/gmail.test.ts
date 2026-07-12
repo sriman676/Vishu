@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildMessage, dotStuff, GmailConnector } from "./gmail.js";
+import { buildMessage, dotStuff, GmailConnector, parseMessage } from "./gmail.js";
 
 test("dotStuff: leading-dot lines are escaped and newlines become CRLF", () => {
   assert.equal(dotStuff("hello\n.hidden\nworld"), "hello\r\n..hidden\r\nworld");
@@ -14,6 +14,14 @@ test("buildMessage: has required headers, blank line before body, and dot-stuffe
   assert.match(msg, /\r\nTo: you@x\.com\r\n/);
   assert.match(msg, /\r\nSubject: Hi\r\n/);
   assert.match(msg, /\r\n\r\n\.\.dangerous\r\nline$/); // header/body separator + escaped leading dot
+});
+
+test("parseMessage: splits headers/body, extracts From+Subject, un-dot-stuffs body", () => {
+  const raw = "From: Alice <a@x.com>\r\nSubject: Hi there\r\nDate: now\r\n\r\nline one\r\n..dotted\r\nline three";
+  const p = parseMessage(raw);
+  assert.equal(p.from, "Alice <a@x.com>");
+  assert.equal(p.subject, "Hi there");
+  assert.equal(p.text, "line one\r\n.dotted\r\nline three");
 });
 
 test("GmailConnector: unconfigured is not `configured` and send throws (never silently drops)", async () => {

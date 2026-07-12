@@ -80,6 +80,99 @@ export async function sendSmtp(user: string, pass: string, to: string, subject: 
   }
 }
 
+// ── Inbound: Gmail POP3 (pop.gmail.com:995). POP3 is line-based (+OK/-ERR, RETR body ends on a lone "."),
+// so a zero-dep hand-rolled client is far more robust than parsing IMAP's literal grammar — and it meets
+// the same intent: pull new mail and feed the daily-driver. Dedup is by UIDL against a caller-held set.
+
+/** Minimal buffered line reader over a TLS socket: one CRLF line, or a POP3 multiline block ending `.`. */
+function popReader(sock: TLSSocket) {
+  let buf = "";
+  let onData: (() => void) | undefined;
+  sock.on("data", (d: Buffer) => {
+    buf += d.toString("utf8");
+    onData?.();
+  });
+  const wait = (ready: () => number) =>
+    new Promise<string>((resolve, reject) => {
+      const tryTake = () => {
+        const end = ready();
+        if (end >= 0) {
+          const out = buf.slice(0, end);
+          buf = buf.slice(end);
+          onData = undefined;
+          resolve(out);
+        }
+      };
+      onData = tryTake;
+      sock.once("error", reject);
+      tryTake();
+    });
+  return {
+    /** One status line (up to and including CRLF). */
+    line: () => wait(() => { const i = buf.indexOf("\r\n"); return i < 0 ? -1 : i + 2; }),
+    /** A multiline body: everything up to a line containing only ".". */
+    body: () => wait(() => { const i = buf.indexOf("\r\n.\r\n"); return i < 0 ? -1 : i + 5; }),
+  };
+}
+
+/** Parse a raw RFC822 message into from/subject/body. Un-dot-stuffs body lines (POP3 doubles leading dots). */
+export function parseMessage(raw: string): { from: string; subject: string; text: string } {
+  const sep = raw.search(/\r?\n\r?\n/);
+  const head = sep < 0 ? raw : raw.slice(0, sep);
+  const body = sep < 0 ? "" : raw.slice(sep).replace(/^\r?\n\r?\n/, "");
+  const h = (name: string) => new RegExp(`^${name}:\\s*(.+)$`, "im").exec(head)?.[1]?.trim() ?? "";
+  return { from: h("From"), subject: h("Subject"), text: body.replace(/^\.\./gm, ".").trim() };
+}
+
+export interface FetchedMail {
+  uid: string;
+  from: string;
+  subject: string;
+  text: string;
+}
+
+/** Fetch messages whose UIDL is not in `seen` via Gmail POP3. Non-destructive (no DELE) — Gmail keeps the
+ * mail; dedup is the caller's `seen` set. `limit` caps work per poll. Throws loudly on protocol errors. */
+export async function fetchPop3(user: string, pass: string, seen: Set<string>, limit = 10, host = "pop.gmail.com", port = 995): Promise<FetchedMail[]> {
+  const sock = connect({ host, port, servername: host });
+  await new Promise<void>((res, rej) => {
+    sock.once("secureConnect", res);
+    sock.once("error", rej);
+  });
+  const r = popReader(sock);
+  const ok = (l: string, what: string) => {
+    if (!l.startsWith("+OK")) throw new Error(`POP3 ${what} failed: ${l.trim()}`);
+  };
+  const out: FetchedMail[] = [];
+  try {
+    ok(await r.line(), "greeting");
+    sock.write(`USER ${user}\r\n`);
+    ok(await r.line(), "USER");
+    sock.write(`PASS ${pass}\r\n`);
+    ok(await r.line(), "PASS");
+    // UIDL → "+OK" then "<n> <uid>" lines terminated by ".".
+    sock.write("UIDL\r\n");
+    ok(await r.line(), "UIDL");
+    const uidl = await r.body();
+    const nums: { n: string; uid: string }[] = [];
+    for (const ln of uidl.split(/\r?\n/)) {
+      const m = /^(\d+)\s+(\S+)/.exec(ln);
+      if (m && !seen.has(m[2]!)) nums.push({ n: m[1]!, uid: m[2]! });
+    }
+    for (const { n, uid } of nums.slice(-limit)) {
+      sock.write(`RETR ${n}\r\n`);
+      ok(await r.line(), `RETR ${n}`);
+      const raw = (await r.body()).replace(/\r\n\.\r\n$/, "");
+      out.push({ uid, ...parseMessage(raw) });
+    }
+    sock.write("QUIT\r\n");
+    await r.line().catch(() => "");
+  } finally {
+    sock.end();
+  }
+  return out;
+}
+
 /** A reply's text may carry a `Subject: ...` first line (the daily-driver draft doesn't); split it out. */
 function splitSubject(text: string): [string, string] {
   const m = /^Subject:\s*(.+)\r?\n([\s\S]*)$/.exec(text);
