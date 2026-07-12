@@ -173,6 +173,56 @@ export function Matters({ token }: { token: string }) {
   );
 }
 
+/** §11g Board: a read-only Kanban derived from recalled notes. Todo notes carry checklist lines —
+ * "- [ ]" items land in To-do, "- [x]" in Done; matter notes form a Backlog column. Moving cards would
+ * be memory writes, so this stays read-only (ponytail: read first). Reuses memory_recall_memories. */
+export function Board({ token }: { token: string }) {
+  const [notes, setNotes] = useState<Recalled[]>([]);
+  useEffect(() => {
+    if (!token) return;
+    memoryRecall(token, "open matters todo tasks", 30)
+      .then((r) => setNotes(r.notes.filter((n) => n.type === "todo" || n.type === "matter")))
+      .catch((e) => alert(e instanceof Error ? e.message : String(e)));
+  }, [token]);
+
+  const items = (checked: boolean) =>
+    notes
+      .filter((n) => n.type === "todo")
+      .flatMap((n) =>
+        n.body
+          .split("\n")
+          .filter((l) => l.trim().toLowerCase().startsWith(checked ? "- [x]" : "- [ ]"))
+          .map((l) => ({ note: n.name, text: l.replace(/^-\s*\[[ xX]\]\s*/, "").trim() })),
+      );
+
+  const columns = [
+    { title: "To-do", cards: items(false).map((it, i) => ({ key: `t${i}`, label: it.text, sub: it.note })) },
+    { title: "Done", cards: items(true).map((it, i) => ({ key: `d${i}`, label: it.text, sub: it.note })) },
+    { title: "Backlog", cards: notes.filter((n) => n.type === "matter").map((n) => ({ key: n.name, label: n.body.slice(0, 120), sub: n.name })) },
+  ];
+
+  return (
+    <div style={box}>
+      {notes.length === 0 && <div style={{ color: "#888" }}>No tasks or matters yet — triage a message in Inbox to fill the board.</div>}
+      <div style={{ display: "flex", gap: "var(--space-md)", alignItems: "flex-start" }}>
+        {columns.map((col) => (
+          <div key={col.title} style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: "var(--accent)", fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, margin: "4px 0" }}>
+              {col.title} ({col.cards.length})
+            </div>
+            {col.cards.map((c) => (
+              <div key={c.key} className="card" style={{ marginBottom: 8 }}>
+                <div style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{c.label}</div>
+                <div style={{ color: "#8aa", fontSize: 11, marginTop: 4 }}>{c.sub}</div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** §11g Calendar: no live calendar until a token is wired (StubCalendar throws), so this shows the
  * connect-a-token placeholder plus any to-dos that carry a due date (the daily-driver writes them as
  * "… (due: <when>)"). ponytail: parse the due out of the note body — no calendar API until creds land. */
