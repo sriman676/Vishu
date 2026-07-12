@@ -282,6 +282,33 @@ export class MemoryStore {
     return [...bySubject.entries()].filter(([, names]) => names.length > 1).map(([subject, notes]) => ({ subject, notes }));
   }
 
+  /** Live notes whose [[links]] point at a target that resolves to no live note (by name or subject
+   * slug) — a dangling reference left by a rename/delete or a typo'd wikilink. */
+  brokenLinks(): { note: string; missing: string[] }[] {
+    const live = this.notes();
+    const targets = new Set<string>();
+    for (const n of live) {
+      targets.add(n.name);
+      if (n.subject) targets.add(slugify(n.subject));
+    }
+    const out: { note: string; missing: string[] }[] = [];
+    for (const n of live) {
+      const missing = n.links.filter((t) => !targets.has(t));
+      if (missing.length) out.push({ note: n.name, missing });
+    }
+    return out;
+  }
+
+  /** Live notes with no outbound and no inbound links — isolated in the graph, easy to lose. */
+  orphans(): string[] {
+    const live = this.notes();
+    const linkedTo = new Set<string>();
+    for (const n of live) for (const t of n.links) linkedTo.add(t);
+    return live
+      .filter((n) => n.links.length === 0 && !linkedTo.has(n.name) && !(n.subject && linkedTo.has(slugify(n.subject))))
+      .map((n) => n.name);
+  }
+
   /** Re-derive the whole index from the markdown vault (resets the breaker). */
   reindex(): number {
     this.breakerOpen = false;

@@ -109,6 +109,25 @@ test("self-heal: evicts stale superseded notes and flags same-subject conflicts"
   store.close();
 });
 
+test("self-heal: reports broken links and orphans; a well-linked note is neither", async () => {
+  const { vault, db } = paths();
+  const store = new MemoryStore(vault, db);
+  // A well-linked pair: apollo → jane-doe (jane has an inbound link, apollo an outbound one).
+  await store.put({ content: "Project Apollo. Lead is [[Jane Doe]].", subject: "project-apollo", type: "project" });
+  await store.put({ content: "Jane Doe is the tech lead.", subject: "jane-doe", type: "person" });
+  // A dangling reference and a fully isolated note.
+  await store.put({ content: "Refers to [[Nonexistent Thing]].", subject: "broken-src" });
+  await store.put({ content: "An island note with no links.", subject: "lonely" });
+
+  const healed = selfHealMemory(store);
+  assert.deepEqual(healed.brokenLinks, [{ note: "broken-src", missing: ["nonexistent-thing"] }]);
+  assert.deepEqual(healed.orphans, ["lonely"]);
+  // well-linked notes appear in neither report
+  assert.ok(!healed.orphans.includes("project-apollo") && !healed.orphans.includes("jane-doe"));
+  assert.ok(!healed.brokenLinks.some((b) => b.note === "project-apollo"));
+  store.close();
+});
+
 test("smart-walk gathers a linked note recall alone would miss", async () => {
   const { vault, db } = paths();
   const store = new MemoryStore(vault, db);

@@ -34,11 +34,20 @@ export interface SelfHealResult {
   pruned: string[];
   /** Subjects that still have more than one live note (recency-weighted recall handles ranking). */
   conflicts: { subject: string; notes: string[] }[];
+  /** Notes with [[links]] pointing at a target that no live note satisfies (dangling references). */
+  brokenLinks: { note: string; missing: string[] }[];
+  /** Notes with no inbound and no outbound links — isolated in the graph. */
+  orphans: string[];
 }
 
 /** Self-healing memory (Set C #7): consolidate by evicting stale superseded notes (bounds unbounded
  * growth) and report unresolved same-subject contradictions. Recall already applies recency/decay
  * weighting; this is the periodic maintenance + conflict-surfacing pass. Extends the rollup. */
 export function selfHealMemory(store: MemoryStore, opts: { olderThanDays?: number } = {}): SelfHealResult {
-  return { pruned: store.pruneSuperseded(opts.olderThanDays), conflicts: store.conflicts() };
+  return {
+    pruned: store.pruneSuperseded(opts.olderThanDays),
+    conflicts: store.conflicts(),
+    brokenLinks: store.brokenLinks(),
+    orphans: store.orphans(),
+  };
 }
