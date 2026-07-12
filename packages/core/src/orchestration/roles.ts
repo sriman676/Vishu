@@ -60,3 +60,22 @@ export function buildRoles(
   }
   return reg;
 }
+
+/** Cheap, high-frequency roles that should run on the fast local lane when one is configured. */
+const FAST_ROLES = ["fast", "worker", "summariser", "classifier", "embedder"] as const;
+
+/**
+ * Turnkey fast-lane default (user: "faster and faster"). When a local LLM is configured
+ * (`VISHU_LOCAL_BASE_URL` / `VISHU_LOCAL_MODEL`), bind the cheap high-frequency roles to it so
+ * classify/summarise/route work runs on-device while `main` reasoning stays on the cloud fallback.
+ * No local endpoint → every role falls back to `main` (a no-op registry, zero behavior change).
+ * Call sites opt a step onto the lane via `roles.for("fast")` / `modelFor("fast")`.
+ */
+export function fastLaneRoles(main: Router, mainModel: string, env: NodeJS.ProcessEnv = process.env, usageLog?: UsageLog): RoleRegistry {
+  const reg = new RoleRegistry(main, mainModel);
+  const base = env.VISHU_LOCAL_BASE_URL;
+  if (!base) return reg;
+  const local = buildRouter({ type: "ollama", baseUrl: base, model: env.VISHU_LOCAL_MODEL ?? "" } as ProviderConfig, usageLog);
+  for (const role of FAST_ROLES) reg.assign(role, local, env.VISHU_LOCAL_MODEL);
+  return reg;
+}
