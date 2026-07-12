@@ -41,10 +41,16 @@ if (-not (Test-Path $exe)) {
 if (-not (Test-Path $exe)) { throw "ollama.exe not found under $InstallDir after extract." }
 
 Write-Host "[3/4] Starting Ollama server (Intel Arc GPU) ..."
-$bat = Join-Path $InstallDir "start-ollama.bat"
+# Launch ollama.exe serve directly (start-ollama.bat detaches into its own window, which we can't poll).
+# Mirror the Arc env from the bundled ollama-serve.bat.
+$env:OLLAMA_NUM_GPU = "999"
+$env:ZES_ENABLE_SYSMAN = "1"
 $env:OLLAMA_HOST = "127.0.0.1:11434"
-if (Test-Path $bat) { Start-Process -FilePath $bat -WorkingDirectory $InstallDir -WindowStyle Minimized }
-else { Start-Process -FilePath $exe -ArgumentList "serve" -WorkingDirectory $InstallDir -WindowStyle Minimized }
+$env:no_proxy = "localhost,127.0.0.1"
+if (-not (Invoke-RestMethod "http://127.0.0.1:11434/api/version" -TimeoutSec 2 -ErrorAction SilentlyContinue)) {
+  Start-Process -FilePath $exe -ArgumentList "serve" -WorkingDirectory $InstallDir -WindowStyle Hidden `
+    -RedirectStandardOutput "$env:TEMP\ollama-serve.out" -RedirectStandardError "$env:TEMP\ollama-serve.err"
+}
 
 # Wait for the server to accept connections.
 $up = $false
