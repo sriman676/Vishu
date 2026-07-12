@@ -18,6 +18,7 @@ export function App() {
   const [notifs, setNotifs] = useState<string[]>([]);
   const [seen, setSeen] = useState(0);
   const [model, setModel] = useState(() => localStorage.getItem("vishu.model") ?? "");
+  const [voiceOut, setVoiceOut] = useState(() => localStorage.getItem("vishu.voiceOut") === "1");
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<Tab>("chat");
   const sessionId = useRef<string | undefined>(undefined);
@@ -25,6 +26,7 @@ export function App() {
 
   useEffect(() => localStorage.setItem("vishu.token", token), [token]);
   useEffect(() => localStorage.setItem("vishu.model", model), [model]);
+  useEffect(() => localStorage.setItem("vishu.voiceOut", voiceOut ? "1" : "0"), [voiceOut]);
   useEffect(() => {
     if (tab === "notifications") setSeen(notifs.length);
   }, [tab, notifs.length]);
@@ -59,7 +61,16 @@ export function App() {
     if (shared) setInput((cur) => cur || shared);
   }, []);
 
+  // Speak the assistant reply. voiceId per §8 mode is skipped: no mode_list RPC exposes it and no mode sets
+  // one, so it would be a no-op — wire it here off the active mode's voiceId once a modes RPC lands.
+  function speak(text: string) {
+    if (!voiceOut || !("speechSynthesis" in window)) return;
+    speechSynthesis.cancel();
+    speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+  }
+
   function startVoice() {
+    if ("speechSynthesis" in window) speechSynthesis.cancel(); // barge-in: stop TTS the moment the mic opens
     const SR = (window as unknown as { webkitSpeechRecognition?: new () => any; SpeechRecognition?: new () => any });
     const Ctor = SR.SpeechRecognition ?? SR.webkitSpeechRecognition;
     if (!Ctor) return alert("Voice capture isn't supported in this browser.");
@@ -79,6 +90,7 @@ export function App() {
       const r = await startTurn(token, message, sessionId.current, model || undefined);
       sessionId.current = r.sessionId;
       setMsgs((m) => [...m, { role: "assistant", content: r.final }]);
+      speak(r.final);
     } catch (e) {
       setMsgs((m) => [...m, { role: "error", content: e instanceof Error ? e.message : String(e) }]);
     } finally {
@@ -155,8 +167,11 @@ export function App() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
         />
-        <button className="btn" onClick={startVoice} disabled={!token} title="Voice capture">
+        <button className="btn" onClick={startVoice} disabled={!token} title="Voice capture (barge-in stops speech)">
           🎤
+        </button>
+        <button className={voiceOut ? "btn on" : "btn"} onClick={() => setVoiceOut((v) => !v)} title="Speak replies aloud">
+          {voiceOut ? "🔊" : "🔈"}
         </button>
         <button className="btn primary" onClick={send} disabled={!token || busy || !input.trim()}>
           {busy ? "…" : "Send"}
