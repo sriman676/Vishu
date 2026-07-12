@@ -553,7 +553,8 @@ async function rpc(method: string, paramsJson?: string): Promise<number> {
  * goes through a fail-closed ApprovalGate, so send/spend/delete/change_setting can never run unattended. */
 async function mcpServe(argv: string[]): Promise<number> {
   const config = loadConfig();
-  initToken(config.paths.workspaceDir);
+  // No initToken here on purpose: the MCP server needs no Vishu auth token. stdio has none; HTTP is
+  // open on localhost unless VISHU_MCP_TOKEN is set. Token-free by default.
   mkdirSync(config.paths.actionDir, { recursive: true });
   const tools = registerBuiltins(new ToolRegistry());
   const skills = new SkillIndex();
