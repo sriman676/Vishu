@@ -59,6 +59,12 @@ export const connectorsDaily = (token: string, msg: { channel?: string; from: st
   rpc<DailyResult>(token, "vishu.connectors_daily", msg);
 export const dailyBriefing = (token: string) => rpc<{ briefing: string }>(token, "vishu.daily_briefing");
 
+// F12 personas/modes: list for the switcher + the active mode's voiceId (§8 voice).
+export interface Mode { name: string; system: string; tools: string[] | "inherit"; memoryFolder: string; voiceId?: string }
+export const modeList = (token: string) => rpc<{ modes: Mode[]; active: string }>(token, "vishu.mode_list");
+export const modeActivate = (token: string, name: string) =>
+  rpc<{ activated: boolean; reason?: string }>(token, "vishu.mode_activate", { name });
+
 export interface CategoryStat {
   category: string;
   calls: number;

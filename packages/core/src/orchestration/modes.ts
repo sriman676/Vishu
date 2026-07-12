@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { ApprovalGate, type AskFn } from "../reliability/approvals.js";
 import type { RunLog } from "../reliability/runlog.js";
 import type { AuditLog } from "../security/audit.js";
+import { ok, type Registry } from "../transport/rpc.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext } from "../tools/types.js";
 import { narrowRegistry } from "./archetypes.js";
@@ -31,6 +32,7 @@ export const MODES: Record<string, Mode> = {
       "You are Vishu in personal-assistant mode: proactive, concise, and organized. Manage tasks, mail, calendar, and research on the user's behalf. Confirm before anything that sends, spends, or deletes.",
     tools: "inherit",
     memoryFolder: "pa",
+    voiceId: "Zira", // matched loosely against SpeechSynthesis voice names in the UI; falls back to default
   },
   teacher: {
     name: "teacher",
@@ -38,6 +40,7 @@ export const MODES: Record<string, Mode> = {
       "You are Vishu in teacher mode. Explain clearly, from first principles, checking understanding as you go. Ground answers in the user's own material before the wider web. Do not modify files or run commands — teach, don't do.",
     tools: ["read_file", "list_dir", "web_search", "skill_search", "memory_recall"],
     memoryFolder: "teacher",
+    voiceId: "David",
   },
   interviewer: {
     name: "interviewer",
@@ -45,6 +48,7 @@ export const MODES: Record<string, Mode> = {
       "You are Vishu in interviewer mode: a professional mock interviewer. Ask one focused question at a time, listen, then probe or give brief feedback. Stay in role; do not solve the problem for the candidate.",
     tools: ["read_file", "memory_recall", "web_search"],
     memoryFolder: "interview",
+    voiceId: "Mark",
   },
   "co-founder": {
     name: "co-founder",
@@ -52,6 +56,7 @@ export const MODES: Record<string, Mode> = {
       "You are Vishu in co-founder mode: an opinionated engineering partner. Push back, weigh trade-offs, then build. Use the full tool surface to plan, code, test, and ship inside the action directory. Gated actions still require approval.",
     tools: "inherit",
     memoryFolder: "cofounder",
+    voiceId: "Aria",
   },
 };
 
@@ -207,5 +212,15 @@ export function registerModeTools(registry: ToolRegistry, modes: ModeManager): v
       const res = await modes.register(draft, { activate: true });
       return res.registered ? `Created and activated "${draft.name}" mode.` : `Not created: ${res.reason ?? "denied"}.`;
     },
+  });
+}
+
+/** Expose modes over `vishu.mode_*` so the web UI can render a persona switcher and read each mode's voiceId
+ * (§8 voice). mode_list = read; mode_activate = a reversible state change (not gated, mirrors the tool). */
+export function registerModeRpc(registry: Registry, modes: ModeManager): void {
+  registry.register("vishu.mode_list", () => ok({ modes: modes.list(), active: modes.active().name }));
+  registry.register("vishu.mode_activate", (params) => {
+    const name = String((params as { name?: string } | undefined)?.name ?? "");
+    return ok(modes.activate(name));
   });
 }

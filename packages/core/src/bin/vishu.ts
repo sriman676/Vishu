@@ -36,7 +36,7 @@ import { IdentityProfile } from "../personalization/profile.js";
 import { registerEvolve, registerProfile, registerTwin } from "../personalization/rpc.js";
 import { registerOrchestrationTools } from "../orchestration/tools.js";
 import { AgentFactory } from "../orchestration/factory.js";
-import { ModeManager, registerModeTools } from "../orchestration/modes.js";
+import { ModeManager, registerModeRpc, registerModeTools } from "../orchestration/modes.js";
 import { buildRoles } from "../orchestration/roles.js";
 import { registerReasoning } from "../reasoning/rpc.js";
 import { registerReasoningTools } from "../reasoning/tools.js";
@@ -209,6 +209,7 @@ async function serve(): Promise<number> {
   // into the agent's system prompt (below), so a switch actually changes behaviour.
   const modes = new ModeManager({ ask, audit, storePath: join(config.paths.workspaceDir, "modes.json") });
   registerModeTools(tools, modes);
+  registerModeRpc(registry, modes); // web UI persona switcher + per-mode voiceId (§8)
   // §8: scope agent memory write+recall to the active mode's folder (registered here — after `modes` exists).
   registerMemoryTools(tools, memory, () => modes.active().memoryFolder);
   // Boot invariants (UPGRADES §5): never come up ungated, unlogged, or unable to pause. Fail loud.

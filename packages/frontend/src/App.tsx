@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { startTurn, subscribeEvents } from "./api.js";
+import { type Mode, modeActivate, modeList, startTurn, subscribeEvents } from "./api.js";
 import { Activity, Calendar, Eval, Inbox, Matters, Memory, Settings } from "./Panels.js";
 import { Tokens } from "./Tokens.js";
 
@@ -19,6 +19,8 @@ export function App() {
   const [seen, setSeen] = useState(0);
   const [model, setModel] = useState(() => localStorage.getItem("vishu.model") ?? "");
   const [voiceOut, setVoiceOut] = useState(() => localStorage.getItem("vishu.voiceOut") === "1");
+  const [modes, setModes] = useState<Mode[]>([]);
+  const [activeMode, setActiveMode] = useState("");
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<Tab>("chat");
   const sessionId = useRef<string | undefined>(undefined);
@@ -48,6 +50,10 @@ export function App() {
   }, []);
   useEffect(() => {
     if (!token) return;
+    modeList(token).then((r) => { setModes(r.modes); setActiveMode(r.active); }).catch(() => {});
+  }, [token]);
+  useEffect(() => {
+    if (!token) return;
     return subscribeEvents(token, (e) => {
       const s = JSON.stringify(e);
       setEvents((prev) => [...prev.slice(-49), s]);
@@ -61,12 +67,29 @@ export function App() {
     if (shared) setInput((cur) => cur || shared);
   }, []);
 
-  // Speak the assistant reply. voiceId per §8 mode is skipped: no mode_list RPC exposes it and no mode sets
-  // one, so it would be a no-op — wire it here off the active mode's voiceId once a modes RPC lands.
+  // Speak the assistant reply in the active mode's voice (§8): match the mode's voiceId hint loosely against
+  // the browser's installed SpeechSynthesis voices; fall back to the default when none matches.
   function speak(text: string) {
     if (!voiceOut || !("speechSynthesis" in window)) return;
     speechSynthesis.cancel();
-    speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+    const u = new SpeechSynthesisUtterance(text);
+    const want = modes.find((m) => m.name === activeMode)?.voiceId;
+    if (want) {
+      const v = speechSynthesis.getVoices().find((v) => v.name.toLowerCase().includes(want.toLowerCase()));
+      if (v) u.voice = v;
+    }
+    speechSynthesis.speak(u);
+  }
+
+  async function switchMode(name: string) {
+    if (!name || name === activeMode) return;
+    const prev = activeMode;
+    setActiveMode(name); // optimistic
+    const r = await modeActivate(token, name).catch(() => ({ activated: false, reason: "rpc failed" }));
+    if (!r.activated) {
+      setActiveMode(prev);
+      alert(`Couldn't switch mode: ${r.reason ?? "unknown"}`);
+    }
   }
 
   function startVoice() {
@@ -109,9 +132,16 @@ export function App() {
             </button>
           ))}
         </nav>
+        {modes.length > 0 && (
+          <select className="input" style={{ marginLeft: "auto", width: 150 }} value={activeMode} onChange={(e) => switchMode(e.target.value)} title="Active persona/mode">
+            {modes.map((m) => (
+              <option key={m.name} value={m.name}>{m.name}</option>
+            ))}
+          </select>
+        )}
         <input
           className="input"
-          style={{ marginLeft: "auto", width: 280 }}
+          style={{ marginLeft: modes.length > 0 ? undefined : "auto", width: 280 }}
           type="password"
           placeholder="paste core.token"
           value={token}
