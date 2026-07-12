@@ -221,6 +221,54 @@ export class MemoryStore {
     return removed;
   }
 
+  /** §11f ingest lane: connectors write raw inbound here (folder "ingest", transient 7-day tier). Cheap
+   * to add — a matched signal is lifted into working memory via promote(); the rest expire in the sweep. */
+  async ingest(content: string, subject?: string): Promise<Note> {
+    return this.put({ content, subject, type: "ingest", folder: "ingest" });
+  }
+
+  /** Lift a note out of the ingest lane into working memory (root, or a named folder) so the TTL sweep
+   * won't expire it. No-op (undefined) if the note is gone. Returns the moved note. */
+  promote(name: string, folder?: string): Note | undefined {
+    const note = this.vault.read(name);
+    if (!note) return undefined;
+    const moved: Note = { ...note, folder: normFolder(folder), type: note.type === "ingest" ? "fact" : note.type, updated: new Date().toISOString() };
+    this.vault.write(moved); // vault.write moves the file + drops the stale copy
+    this.guard(() => this.index.upsert(moved), undefined);
+    this.log.log("memory_promote", `${name} → ${moved.folder ?? "(working)"}`);
+    return moved;
+  }
+
+  /** §11f tiering sweep: expire ingest notes past ingestTtlDays (the raw firehose is transient), and
+   * move working notes past archiveDays into the "cold" tier (kept on disk, marked by folder). Rebuilds
+   * the index once if anything moved. Returns what expired vs archived. ponytail: age-based tiers; add
+   * value/access scoring only if a blunt TTL starts dropping notes that still matter. */
+  sweepTiers(opts: { ingestTtlDays?: number; archiveDays?: number; now?: number } = {}): { expired: string[]; archived: string[] } {
+    const now = opts.now ?? Date.now();
+    const ingestCut = now - (opts.ingestTtlDays ?? 7) * 86_400_000;
+    const archiveCut = now - (opts.archiveDays ?? 90) * 86_400_000;
+    const expired: string[] = [];
+    const archived: string[] = [];
+    for (const n of this.vault.list()) {
+      if (n.supersededBy) continue;
+      const age = Date.parse(n.updated);
+      if (n.folder === "ingest") {
+        if (age < ingestCut) {
+          this.vault.remove(n.name);
+          expired.push(n.name);
+        }
+      } else if (n.folder !== "cold" && age < archiveCut) {
+        this.vault.write({ ...n, folder: "cold" }); // demote to cold; folder marks the tier, note kept
+        archived.push(n.name);
+      }
+    }
+    if (expired.length || archived.length) {
+      this.reindex();
+      this.log.log("memory_sweep", `expired ${expired.length}, archived ${archived.length}`);
+    }
+    return { expired, archived };
+  }
+
   /** Subjects with more than one *live* note — a contradiction the supersede-on-write path missed
    * (e.g. notes edited directly in Obsidian). Recall already prefers newest; this surfaces the conflict. */
   conflicts(): { subject: string; notes: string[] }[] {
