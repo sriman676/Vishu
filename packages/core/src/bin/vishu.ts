@@ -15,7 +15,8 @@ import { registerAutomation, registerAutofix } from "../automation/rpc.js";
 import { SchedulerGate } from "../automation/gate.js";
 import { attachNotificationSink } from "../automation/notify.js";
 import { startResourceGuard } from "../automation/sensor.js";
-import { TriggerManager } from "../automation/triggers.js";
+import { TriggerManager, TriggerStore } from "../automation/triggers.js";
+import { RunStore } from "../automation/runs.js";
 import { WorkflowStore } from "../automation/workflows.js";
 import { registerConnectors } from "../connectors/rpc.js";
 import { LocalConnector } from "../connectors/local.js";
@@ -283,6 +284,9 @@ async function serve(): Promise<number> {
     autonomy: "automatic",
     run: async (step) => (await agentService.startTurn(undefined, step)).final,
     runLog: new RunLog(),
+    // Durability: triggers persist + reload on restart; interrupted workflow runs resume per-step.
+    triggerStore: new TriggerStore(join(config.paths.workspaceDir, "triggers.json")),
+    runStore: new RunStore(join(config.paths.workspaceDir, "runs")),
   });
   registerAutomation(registry, workflows, triggers);
   registerAutofix(registry, {

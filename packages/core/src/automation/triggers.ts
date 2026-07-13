@@ -1,4 +1,5 @@
-import { watch, type FSWatcher } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { dirname } from "node:path";
 import type { Autonomy } from "../reliability/approvals.js";
 import type { RunLog } from "../reliability/runlog.js";
 import type { DomainEvent, EventBus } from "../transport/events.js";
@@ -19,6 +20,32 @@ export interface Trigger {
   nextDue?: number; // schedule bookkeeping (ms epoch)
 }
 
+/** Durable trigger definitions — a single JSON file so registered triggers survive restart (like the
+ * WorkflowStore for workflows). ponytail: load-filter-write per save; triggers are few (no index needed). */
+export class TriggerStore {
+  constructor(private readonly file: string) {}
+  load(): Trigger[] {
+    try {
+      const all = JSON.parse(readFileSync(this.file, "utf8")) as Trigger[];
+      return Array.isArray(all) ? all : [];
+    } catch {
+      return [];
+    }
+  }
+  save(trigger: Trigger): void {
+    const all = this.load().filter((t) => t.id !== trigger.id);
+    all.push({ id: trigger.id, spec: trigger.spec, workflow: trigger.workflow }); // nextDue is runtime-only
+    try {
+      mkdirSync(dirname(this.file), { recursive: true });
+      const tmp = `${this.file}.tmp`;
+      writeFileSync(tmp, JSON.stringify(all, null, 2));
+      renameSync(tmp, this.file); // atomic — a crash never leaves a half-written trigger file
+    } catch {
+      /* best-effort — a lost trigger def just isn't re-registered next boot */
+    }
+  }
+}
+
 export interface TriggerDeps {
   bus: EventBus;
   store: WorkflowStore;
@@ -33,6 +60,8 @@ export interface TriggerDeps {
   /** Durable runs (§11e): when set, firings checkpoint per-step and interrupted runs resume on start().
    * Absent → in-memory runWorkflow (a restart re-runs from the top, the prior behavior). */
   runStore?: RunStore;
+  /** Durable trigger defs: when set, add() persists and start() reloads them so triggers survive restart. */
+  triggerStore?: TriggerStore;
 }
 
 /** Proactive automation: a 5s cron tick fires due schedule triggers; EventBus and file-watch triggers
@@ -46,7 +75,15 @@ export class TriggerManager {
 
   constructor(private readonly deps: TriggerDeps) {}
 
+  /** Register a trigger and persist it (so it survives restart). */
   add(trigger: Trigger): void {
+    this.register(trigger);
+    this.deps.triggerStore?.save(trigger);
+  }
+
+  /** Wire a trigger's schedule/subscription/watcher into the live manager (no persistence — the reload
+   * path calls this directly so a reloaded trigger isn't re-saved). */
+  private register(trigger: Trigger): void {
     if (trigger.spec.type === "schedule") trigger.nextDue = Date.now() + trigger.spec.everyMs;
     this.triggers.set(trigger.id, trigger);
     if (trigger.spec.type === "event") {
@@ -79,6 +116,8 @@ export class TriggerManager {
   }
 
   start(): void {
+    // Reload persisted triggers first (survive restart) — skip any id already registered live this boot.
+    for (const t of this.deps.triggerStore?.load() ?? []) if (!this.triggers.has(t.id)) this.register(t);
     // §11e: pick up any run interrupted by the last shutdown before the cron begins firing new ones.
     if (this.deps.runStore) void resumeIncomplete(this.deps.runStore, (n) => this.deps.store.get(n), this.deps.run);
     this.timer ??= setInterval(() => this.tick(), this.deps.tickMs ?? 5000);
