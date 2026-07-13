@@ -3,6 +3,7 @@ import type { ChatMessage, ToolCall } from "../providers/types.js";
 import type { ApprovalDecision, AskFn } from "../reliability/approvals.js";
 import { estimateTokens, type Budget } from "../reliability/budget.js";
 import type { RunLog } from "../reliability/runlog.js";
+import type { Tracer } from "../reliability/trace.js";
 import { redact } from "../security/dlp.js";
 import type { SecurityPolicy } from "../security/policy.js";
 import { compactTranscript } from "../tokenjuice/compact.js";
@@ -31,6 +32,8 @@ export interface ToolLoopDeps {
   ask?: AskFn;
   /** Compact the transcript before each provider call (default true). */
   compact?: boolean;
+  /** Span tracer (PAUL): times each tool execution. Absent → no tracing (fn still runs). */
+  tracer?: Tracer;
 }
 
 /** provider → tool calls → execute (security + approval gated) → feed results back → repeat,
@@ -65,7 +68,8 @@ export async function runToolLoop(
 
       let output: string;
       try {
-        output = await deps.registry.get(call.name).run(call.arguments, { policy: deps.policy, terminal: deps.terminal, ask: deps.ask });
+        const runTool = () => deps.registry.get(call.name).run(call.arguments, { policy: deps.policy, terminal: deps.terminal, ask: deps.ask });
+        output = await (deps.tracer ? deps.tracer.span(`tool:${call.name}`, runTool) : runTool());
       } catch (e) {
         // ponytail: tool failure feeds back as an error message so the model can recover (fault isolation).
         output = `error: ${e instanceof Error ? e.message : String(e)}`;

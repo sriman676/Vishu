@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { readSpans } from "../reliability/trace.js";
 import { err, ok, type Registry } from "../transport/rpc.js";
 import { readLedger, ledgerReport } from "./ledger.js";
 import { readUsage } from "./log.js";
@@ -22,6 +23,7 @@ export function registerUsage(registry: Registry, workspaceDir: string): void {
     const days = p.days && p.days > 0 ? p.days : 7;
     if (!Number.isFinite(days)) return err("invalid_params", "days must be a positive number");
     const events = readLedger(join(workspaceDir, "usage.jsonl"), join(workspaceDir, "decisions.jsonl"));
-    return ok({ days, ...ledgerReport(events, days * DAY_MS) });
+    const spans = readSpans(join(workspaceDir, "spans.jsonl"));
+    return ok({ days, ...ledgerReport(events, days * DAY_MS, Date.now(), spans) });
   });
 }

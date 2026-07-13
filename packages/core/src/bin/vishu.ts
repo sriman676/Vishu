@@ -78,6 +78,7 @@ import { BudgetWatcher } from "../usage/budget.js";
 import { UsageLog, readUsage } from "../usage/log.js";
 import { buildReport, renderReport } from "../usage/report.js";
 import { ledgerReport, readLedger, renderLedger } from "../usage/ledger.js";
+import { TraceLog, Tracer, readSpans } from "../reliability/trace.js";
 import { buildRegistry } from "../transport/all.js";
 import { bus } from "../transport/events.js";
 import { rpcCall, readToken } from "../transport/client.js";
@@ -161,7 +162,8 @@ async function serve(): Promise<number> {
   // Multi-provider pool: when named providers are configured, span them all in one Router (each bound to
   // its own model). VISHU_KEY_MODE decides parallel (balance) vs one-after-other (failover).
   const pooled = Object.keys(config.providers).length > 0;
-  const router = pooled ? buildPoolRouter(config.providers, usage, cassette) : buildRouter(config.provider, usage, cassette);
+  const tracer = new Tracer(new TraceLog(join(config.paths.workspaceDir, "spans.jsonl"))); // PAUL span tracing → ledger latency
+  const router = pooled ? buildPoolRouter(config.providers, usage, cassette, tracer) : buildRouter(config.provider, usage, cassette, tracer);
   if (pooled) process.stdout.write(`[pool] ${Object.keys(config.providers).join(" + ")} (mode: ${process.env.VISHU_KEY_MODE || "failover"})\n`);
   const roles = buildRoles(router, config.provider.model, config.providers, config.roles, usage);
   // Expert/"builder" work runs on the largest NIM model (decision 2026-07-10). A dedicated builder
@@ -261,7 +263,7 @@ async function serve(): Promise<number> {
     const terminal = new Terminal(config.paths.actionDir);
     try {
       const svc = new AgentService(
-        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile, mode: modes, ask, audit, rememberFile, sendCapFile, sendCap, decisions, suggest },
+        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile, mode: modes, ask, audit, rememberFile, sendCapFile, sendCap, decisions, suggest, tracer },
         sessions,
       );
       return await svc.startTurn(sid, msg);
@@ -478,7 +480,8 @@ function ledger(daysArg?: string): number {
   const days = daysArg ? Number(daysArg) : 7;
   if (!Number.isFinite(days) || days <= 0) return usageErr("vishu ledger [days]");
   const events = readLedger(join(config.paths.workspaceDir, "usage.jsonl"), join(config.paths.workspaceDir, "decisions.jsonl"));
-  process.stdout.write(`${renderLedger(ledgerReport(events, days * 86_400_000), days)}\n`);
+  const spans = readSpans(join(config.paths.workspaceDir, "spans.jsonl"));
+  process.stdout.write(`${renderLedger(ledgerReport(events, days * 86_400_000, Date.now(), spans), days)}\n`);
   return 0;
 }
 

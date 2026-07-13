@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { DecisionEntry } from "../reliability/autonomy.js";
+import { type SpanRecord, type SpanStat, spanReport } from "../reliability/trace.js";
 import { readUsage } from "./log.js";
 import { costOf } from "./report.js";
 
@@ -94,10 +95,12 @@ export interface LedgerReport {
   totalDecisions: number;
   totalDenied: number;
   turns: TurnStat[];
+  /** Per-operation latency (router.chat + tool:*), empty when no spans were traced. */
+  spans: SpanStat[];
 }
 
-/** Aggregate the merged ledger over the last `sinceMs`, with per-turn cost attribution. */
-export function ledgerReport(events: LedgerEvent[], sinceMs: number, now = Date.now()): LedgerReport {
+/** Aggregate the merged ledger over the last `sinceMs`, with per-turn cost attribution + span latency. */
+export function ledgerReport(events: LedgerEvent[], sinceMs: number, now = Date.now(), spans: SpanRecord[] = []): LedgerReport {
   const since = now - sinceMs;
   const rows = events.filter((e) => e.ts >= since);
   const ts = turns(rows);
@@ -110,6 +113,7 @@ export function ledgerReport(events: LedgerEvent[], sinceMs: number, now = Date.
     totalDecisions: ts.reduce((s, t) => s + t.decisions, 0),
     totalDenied: ts.reduce((s, t) => s + t.denied, 0),
     turns: ts,
+    spans: spanReport(spans, sinceMs, now),
   };
 }
 
@@ -133,5 +137,15 @@ export function renderLedger(r: LedgerReport, days: number): string {
       `  ${when}  ${String(t.calls).padStart(5)}  ${t.tokens.toLocaleString().padStart(9)}  ${usd(t.usd).padStart(7)}   ${t.decisions}/${t.denied}`,
     );
   }
+  if (r.spans.length) {
+    lines.push("");
+    lines.push("Where time goes            calls   p50    p95    max");
+    for (const s of r.spans) {
+      const err = s.errors ? ` (${s.errors} err)` : "";
+      lines.push(`  ${s.name.padEnd(24)} ${String(s.calls).padStart(5)}  ${ms(s.p50)}  ${ms(s.p95)}  ${ms(s.maxMs)}${err}`);
+    }
+  }
   return lines.join("\n");
 }
+
+const ms = (n: number): string => `${n}ms`.padStart(6);

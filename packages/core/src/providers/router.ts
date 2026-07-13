@@ -1,4 +1,5 @@
 import type { Cassette } from "../replay/cassette.js";
+import type { Tracer } from "../reliability/trace.js";
 import type { UsageLog } from "../usage/log.js";
 import { isTransient } from "./transient.js";
 import type { ChatRequest, ChatResponse, OnDelta, Provider } from "./types.js";
@@ -25,6 +26,7 @@ export class Router {
     private readonly usageLog?: UsageLog,
     private readonly cassette?: Cassette,
     private readonly mode: KeyMode = "failover",
+    private readonly tracer?: Tracer,
   ) {
     if (endpoints.length === 0) throw new Error("[router] no providers configured");
   }
@@ -44,7 +46,7 @@ export class Router {
       this.logUsage(req, replayed);
       return replayed;
     }
-    const res = await this.run((p) => p.chat(req));
+    const res = await this.traced(req, (p) => p.chat(req));
     this.cassette?.put(req, res);
     this.logUsage(req, res);
     return res;
@@ -57,10 +59,15 @@ export class Router {
       this.logUsage(req, replayed);
       return replayed;
     }
-    const res = await this.run((p) => p.chatStream(req, onDelta));
+    const res = await this.traced(req, (p) => p.chatStream(req, onDelta));
     this.cassette?.put(req, res);
     this.logUsage(req, res);
     return res;
+  }
+
+  /** run() wrapped in a `router.chat` span (categorised by request category) when a tracer is wired. */
+  private traced(req: ChatRequest, call: (p: Provider) => Promise<ChatResponse>): Promise<ChatResponse> {
+    return this.tracer ? this.tracer.span("router.chat", () => this.run(call), req.category) : this.run(call);
   }
 
   /** Record one call's token usage; fall back to chars/4 when the provider/stream omits real usage. */

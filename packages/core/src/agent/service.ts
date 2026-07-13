@@ -5,6 +5,7 @@ import type { ActionClass } from "../security/actions.js";
 import type { DecisionStore } from "../reliability/autonomy.js";
 import { type Graduation, graduationFromEnv } from "../reliability/graduation.js";
 import type { RunLog } from "../reliability/runlog.js";
+import type { Tracer } from "../reliability/trace.js";
 import type { AuditLog } from "../security/audit.js";
 import type { SecurityPolicy } from "../security/policy.js";
 import type { IdentityProfile } from "../personalization/profile.js";
@@ -47,6 +48,8 @@ export interface AgentDeps {
   decisions?: DecisionStore;
   /** Notify when a reversible signature crosses the suggest threshold (bin publishes a bus notice). */
   suggest?: (actionClass: ActionClass, signature: string) => void;
+  /** Span tracer (PAUL): times router + tool-loop spans into the ledger's latency section. */
+  tracer?: Tracer;
 }
 
 export interface TurnResult {
@@ -105,6 +108,7 @@ export class AgentService {
         runLog: this.deps.runLog,
         approve: (call) => this.gate.decide(call), // F0 gate — every tool call passes through here
         ask: this.deps.ask, // handed to delegating tools (dispatch) so their subagents can request approval
+        tracer: this.deps.tracer, // times each tool span into spans.jsonl
       },
       session.messages,
     );
