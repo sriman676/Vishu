@@ -9,8 +9,16 @@ const PATTERNS: { kind: string; re: RegExp }[] = [
   { kind: "jwt", re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
   { kind: "api-key", re: /\b(?:sk-ant-|sk-or-|sk-|ghp_|gho_|ghs_|ghu_|github_pat_|xox[baprs]-|AIza)[A-Za-z0-9_-]{16,}\b/g },
   { kind: "bearer", re: /\bBearer\s+[A-Za-z0-9._-]{20,}/g },
-  { kind: "email", re: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g },
 ];
+
+/** Email is PII, not a credential — masked only at the cloud-egress boundary, not in the local transcript
+ * (a PA that triages/drafts mail must SEE addresses to act on them). {@link redactEmail} handles egress. */
+const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+
+/** Mask email addresses — applied to messages bound for a cloud provider only (see providers/factory.ts). */
+export function redactEmail(text: string): string {
+  return text ? text.replace(EMAIL_RE, "[REDACTED:email]") : text;
+}
 
 /** Standard Luhn checksum — gates card redaction so arbitrary long digit runs (ids, hashes) survive. */
 function luhn(digits: string): boolean {

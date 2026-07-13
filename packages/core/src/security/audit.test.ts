@@ -31,6 +31,21 @@ test("AuditLog is append-only across instances (durable across runs)", () => {
   assert.equal(readFileSync(file, "utf8").trim().split("\n").length, 2);
 });
 
+test("two AuditLog instances on one file keep an intact chain (no stale-cache fork)", () => {
+  // The gate's log + the builtins' egress log are separate instances sharing the default file. Interleave
+  // their writes; a cached lastHash would fork the chain. Re-reading the tail per record must keep it valid.
+  const file = tmpFile();
+  const gate = new AuditLog(file);
+  const egress = new AuditLog(file);
+  gate.record({ kind: "gate", tool: "a", verdict: "allow" });
+  egress.record({ kind: "egress", tool: "web_fetch", host: "x.test", verdict: "warn" });
+  gate.record({ kind: "gate", tool: "b", verdict: "deny" }); // stale-cache bug would break the link here
+  egress.record({ kind: "egress", tool: "web_fetch", host: "y.test", verdict: "warn" });
+  const v = verifyAuditFile(file);
+  assert.equal(v.ok, true);
+  assert.equal(v.entries, 4);
+});
+
 test("AuditLog.record never throws on an unwritable path (best-effort)", () => {
   // A path whose parent is a file, not a dir → mkdir/append fail; must be swallowed.
   const bad = join(tmpFile(), "nested", "decisions.jsonl");

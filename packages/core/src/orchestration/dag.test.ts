@@ -57,3 +57,20 @@ test("makeToolRunner runs registered tools but refuses side-effecting + delegati
   await assert.rejects(runTool("pay", {}), /spend-class/); // floor class blocked
   await assert.rejects(runTool("dispatch", {}), /no recursion\/fan-out/); // delegating tool blocked
 });
+
+test("makeToolRunner refuses a risky run_shell command (no per-command prompt inside a workflow)", async () => {
+  const reg = new ToolRegistry();
+  let ran = false;
+  reg.register({
+    name: "run_shell",
+    description: "",
+    parameters: { type: "object", properties: {} },
+    run: async () => ((ran = true), "should not run"),
+    meta: { action: "write" }, // action-class write → the floor check alone wouldn't stop a destructive command
+  });
+  const runTool = makeToolRunner(reg, { policy: {}, terminal: {} } as unknown as ToolContext);
+
+  await assert.rejects(runTool("run_shell", { command: "rm -rf /" }), /safe-class/);
+  assert.equal(ran, false); // blocked before the tool ran
+  assert.equal(await runTool("run_shell", { command: "ls -la" }), "should not run"); // safe command passes through
+});

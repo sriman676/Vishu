@@ -29,17 +29,18 @@ function chainHash(payload: string): string {
  * caught by {@link verifyAuditFile}. Best-effort: a logging failure must never block or crash a tool call.
  */
 export class AuditLog {
-  /** Prior line's hash, lazily seeded from the file tail so the chain survives restart. */
-  private lastHash: string | undefined;
   constructor(private readonly file: string = defaultAuditFile()) {}
   record(e: AuditEntry): void {
     try {
       mkdirSync(dirname(this.file), { recursive: true });
-      const prev = this.lastHash ?? (this.lastHash = readLastHash(this.file));
+      // Re-read the tail on every append rather than caching: multiple AuditLog instances share one file
+      // (the gate's log + the builtins' egress log both default here), so a cached lastHash would go stale
+      // when the other instance appends and fork the chain. record() is fully synchronous, so the read+append
+      // can't interleave with another record() in this single-threaded process — the chain stays intact.
+      const prev = readLastHash(this.file);
       const base = { ts: new Date().toISOString(), ...e, prev }; // hashed as-is; `hash` appended after
       const hash = chainHash(JSON.stringify(base));
       appendFileSync(this.file, `${JSON.stringify({ ...base, hash })}\n`);
-      this.lastHash = hash;
     } catch {
       /* audit is best-effort — never let a logging failure break the action it records */
     }

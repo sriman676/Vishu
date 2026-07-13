@@ -1,4 +1,5 @@
 import { NEVER_WITHOUT_ASKING } from "../security/actions.js";
+import { classifyCommand } from "../security/classify.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext } from "../tools/types.js";
 
@@ -108,6 +109,12 @@ export function makeToolRunner(registry: ToolRegistry, ctx: ToolContext): (tool:
     if (NON_COMPOSABLE.has(tool)) throw new Error(`blocked: ${tool} can't run inside a workflow (no recursion/fan-out)`);
     const action = registry.getAction(tool);
     if (NEVER_WITHOUT_ASKING.has(action)) throw new Error(`blocked: ${tool} is ${action}-class — run it through the gated loop, not a workflow`);
+    // run_shell is action-class "write", so command-level risk (rm/push/destructive) is graded per-command,
+    // not by the gate here. The interactive loop runs classifyCommand + prompts; a workflow has no prompt, so
+    // refuse anything not "safe" — a risky command must go through the gated loop, never a declarative spec.
+    if (tool === "run_shell" && classifyCommand(String(args.command ?? "")) !== "safe") {
+      throw new Error(`blocked: run_shell command isn't safe-class — run it through the gated loop, not a workflow`);
+    }
     return registry.get(tool).run(args, ctx);
   };
 }
