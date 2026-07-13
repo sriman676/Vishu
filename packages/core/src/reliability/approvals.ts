@@ -5,6 +5,7 @@ import { isPaused as defaultIsPaused } from "../automation/pause.js";
 import { type ActionClass, classifyTool, NEVER_WITHOUT_ASKING } from "../security/actions.js";
 import type { AuditLog } from "../security/audit.js";
 import { classifyCommand, type CommandClass } from "../security/classify.js";
+import type { EscalationStatus } from "./status.js";
 import type { DecisionStore } from "./autonomy.js";
 import type { Graduation } from "./graduation.js";
 
@@ -22,6 +23,15 @@ export interface ApprovalRequest {
 export interface ApprovalDecision {
   allowed: boolean;
   reason?: string;
+  /** PAUL escalation status (set by decide()): done | concerns | needs_context | blocked. */
+  status?: EscalationStatus;
+}
+
+/** Allowed → done (concerns when auto-allowed under a grant/graduation). Denied by hard policy
+ * (pause/cap/always-ask) → blocked; denied at a prompt (or fail-closed no-UI) → needs_context. */
+function statusOf(d: ApprovalDecision): EscalationStatus {
+  if (d.allowed) return /granted|graduated/.test(d.reason ?? "") ? "concerns" : "done";
+  return /pause|cap reached|always-ask/.test(d.reason ?? "") ? "blocked" : "needs_context";
 }
 
 export type AskFn = (req: ApprovalRequest) => Promise<boolean>;
@@ -140,6 +150,7 @@ export class ApprovalGate {
   async decide(call: ToolCall): Promise<ApprovalDecision> {
     const action = this.actionOf(call.name);
     const decision = await this.evaluate(call, action);
+    decision.status = statusOf(decision); // graded verdict alongside the allow/deny boolean
     this.audit?.record({ kind: "gate", tool: call.name, action, verdict: decision.allowed ? "allow" : "deny", reason: decision.reason });
     return decision;
   }

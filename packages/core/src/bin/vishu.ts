@@ -77,6 +77,7 @@ import { registerUsage } from "../usage/rpc.js";
 import { BudgetWatcher } from "../usage/budget.js";
 import { UsageLog, readUsage } from "../usage/log.js";
 import { buildReport, renderReport } from "../usage/report.js";
+import { ledgerReport, readLedger, renderLedger } from "../usage/ledger.js";
 import { buildRegistry } from "../transport/all.js";
 import { bus } from "../transport/events.js";
 import { rpcCall, readToken } from "../transport/client.js";
@@ -471,6 +472,16 @@ function report(daysArg?: string): number {
   return 0;
 }
 
+/** Unified ledger straight from the local logs (no running core): per-turn token+decision cost. */
+function ledger(daysArg?: string): number {
+  const config = loadConfig();
+  const days = daysArg ? Number(daysArg) : 7;
+  if (!Number.isFinite(days) || days <= 0) return usageErr("vishu ledger [days]");
+  const events = readLedger(join(config.paths.workspaceDir, "usage.jsonl"), join(config.paths.workspaceDir, "decisions.jsonl"));
+  process.stdout.write(`${renderLedger(ledgerReport(events, days * 86_400_000), days)}\n`);
+  return 0;
+}
+
 /** Long-horizon eval harness: run the built-in suite against a runner, print a scorecard + trend, and
  * append the run to history so quality is tracked over time. Runners: baseline | effort | moa. */
 async function evalCmd(runnerName = "effort"): Promise<number> {
@@ -655,6 +666,7 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd === "mcp-serve") return mcpServe(argv.slice(1));
   if (cmd === "report") return report(argv[1]);
+  if (cmd === "ledger") return ledger(argv[1]);
   if (cmd === "eval") return argv[1] === "swebench" ? sweBenchCmd(argv.slice(2)) : evalCmd(argv[1]);
   if (cmd === "rpc") {
     const method = argv[1];
@@ -679,6 +691,7 @@ async function main(argv: string[]): Promise<number> {
       "  vishu vet <repo-dir>         static security gate on a repo (PASS/WARN/BLOCKED; nonzero if blocked)",
       "  vishu trust <dir> [--remove] trust/untrust a repo (own audited code): findings warn, don't block",
       "  vishu report [days]          weekly token report: where tokens go + where they're wasted",
+      "  vishu ledger [days]          unified token+decision ledger with per-turn cost attribution",
       "  vishu eval [runner]          run the eval suite (baseline|effort|moa) + track quality over time",
       "  vishu eval swebench [--limit N] [--file f] [--out p]   SWE-bench Lite: write predictions.jsonl",
       "  vishu rpc <method> [json]    call a method on a running core",

@@ -21,6 +21,17 @@ test("send/spend/delete/change_setting ALWAYS ask — even under automatic auton
   assert.deepEqual(asked, ["outreach_send", "pay_invoice", "delete_note", "set_mode"]);
 });
 
+test("decide() attaches a PAUL escalation status: done on allow, blocked when paused, needs_context on deny", async () => {
+  const allowed = new ApprovalGate("automatic", async () => true, { actionOf: () => "read", isPaused: () => false });
+  assert.equal((await allowed.decide(call("read_file"))).status, "done");
+
+  const paused = new ApprovalGate("automatic", async () => false, { actionOf: () => "write", isPaused: () => true });
+  assert.equal((await paused.decide(call("write_file"))).status, "blocked");
+
+  const denied = new ApprovalGate("automatic", async () => false, { actionOf: () => "send", isPaused: () => false });
+  assert.equal((await denied.decide(call("outreach_send"))).status, "needs_context");
+});
+
 test("a send tool is asked EVERY time — ask_once never remembers a dangerous class", async () => {
   let asks = 0;
   const gate = new ApprovalGate("ask_once", async () => (asks++, true), {
