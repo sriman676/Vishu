@@ -3,6 +3,7 @@ import type { ChatMessage, ToolCall } from "../providers/types.js";
 import type { ApprovalDecision, AskFn } from "../reliability/approvals.js";
 import { estimateTokens, type Budget } from "../reliability/budget.js";
 import type { RunLog } from "../reliability/runlog.js";
+import { redact } from "../security/dlp.js";
 import type { SecurityPolicy } from "../security/policy.js";
 import { compactTranscript } from "../tokenjuice/compact.js";
 import { summarizeToolResult } from "../tokenjuice/summarize.js";
@@ -69,7 +70,7 @@ export async function runToolLoop(
         // ponytail: tool failure feeds back as an error message so the model can recover (fault isolation).
         output = `error: ${e instanceof Error ? e.message : String(e)}`;
       }
-      output = summarizeToolResult(output);
+      output = redact(summarizeToolResult(output)); // DLP: strip secrets/PII before it re-enters the transcript
       deps.runLog?.log("tool_result", output.slice(0, 200));
       messages.push({ role: "tool", content: output, toolCallId: call.id, name: call.name });
     }
