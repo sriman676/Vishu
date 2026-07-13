@@ -55,6 +55,7 @@ import { buildPoolRouter, buildRouter } from "../providers/factory.js";
 import { RunLog } from "../reliability/runlog.js";
 import { makeAsk, terminalPrompt } from "../reliability/ask.js";
 import { AuditLog } from "../security/audit.js";
+import { registerAudit } from "../security/rpc.js";
 import { assertBoot, selfCheck } from "../reliability/selfcheck.js";
 import { DecisionStore, registerDecisions } from "../reliability/autonomy.js";
 import { ApprovalGate } from "../reliability/approvals.js";
@@ -178,6 +179,7 @@ async function serve(): Promise<number> {
   );
   registerMemory(registry, memory);
   registerUsage(registry, config.paths.workspaceDir);
+  registerAudit(registry); // vishu.audit_verify — tamper-check the hash-chained decision log (default file)
   registerReasoningTools(tools, { router, model: config.provider.model });
   registerReasoning(registry, { router, model: config.provider.model });
   registerReplay(registry, cassette);
