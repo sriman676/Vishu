@@ -12,6 +12,7 @@ import { AgentService } from "../agent/service.js";
 import { loadConfig, providerPresets, resolveBuilderModel } from "../config/config.js";
 import { ok as okRpc } from "../transport/rpc.js";
 import { registerAutomation, registerAutofix } from "../automation/rpc.js";
+import { registerScheduleTools } from "../automation/schedule.js";
 import { SchedulerGate } from "../automation/gate.js";
 import { attachNotificationSink } from "../automation/notify.js";
 import { startResourceGuard } from "../automation/sensor.js";
@@ -253,6 +254,7 @@ async function serve(): Promise<number> {
     sendCap,
     decisions,
     suggest,
+    tracer, // span-trace the main interactive turn's tool loop, not just queued tasks
   }, sessions);
   registerAgent(registry, agentService);
   registerDecisions(registry, decisions); // vishu.decisions_list / autonomy_grant / autonomy_revoke
@@ -289,6 +291,8 @@ async function serve(): Promise<number> {
     runStore: new RunStore(join(config.paths.workspaceDir, "runs")),
   });
   registerAutomation(registry, workflows, triggers);
+  // Agent-facing NL scheduling (proposal #1): schedule_task / list_tasks / cancel_task over the trigger infra.
+  registerScheduleTools(tools, { store: workflows, manager: triggers });
   registerAutofix(registry, {
     actionDir: config.paths.actionDir,
     autonomy: "automatic",
@@ -385,14 +389,17 @@ async function chat(text: string): Promise<number> {
 async function agent(text: string): Promise<number> {
   const config = loadConfig();
   mkdirSync(config.paths.actionDir, { recursive: true });
+  mkdirSync(config.paths.workspaceDir, { recursive: true });
   const registry = registerBuiltins(new ToolRegistry());
+  const tracer = new Tracer(new TraceLog(join(config.paths.workspaceDir, "spans.jsonl"))); // trace the one-shot CLI too
   const result = await runToolLoop(
     {
-      router: buildRouter(config.provider, usageLog(config)),
+      router: buildRouter(config.provider, usageLog(config), undefined, tracer),
       registry,
       policy: makePolicy("full", config.paths.actionDir),
       terminal: new Terminal(config.paths.actionDir),
       model: config.provider.model,
+      tracer,
     },
     [
       { role: "system", content: "You are Vishu, a coding agent. Use the tools to build, run, and verify work strictly inside the action directory." },

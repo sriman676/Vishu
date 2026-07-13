@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, watch, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Autonomy } from "../reliability/approvals.js";
 import type { RunLog } from "../reliability/runlog.js";
@@ -33,8 +33,13 @@ export class TriggerStore {
     }
   }
   save(trigger: Trigger): void {
-    const all = this.load().filter((t) => t.id !== trigger.id);
-    all.push({ id: trigger.id, spec: trigger.spec, workflow: trigger.workflow }); // nextDue is runtime-only
+    this.write(this.load().filter((t) => t.id !== trigger.id).concat({ id: trigger.id, spec: trigger.spec, workflow: trigger.workflow })); // nextDue is runtime-only
+  }
+  /** Drop a persisted trigger so it doesn't re-register next boot. */
+  remove(id: string): void {
+    this.write(this.load().filter((t) => t.id !== id));
+  }
+  private write(all: Trigger[]): void {
     try {
       mkdirSync(dirname(this.file), { recursive: true });
       const tmp = `${this.file}.tmp`;
@@ -69,8 +74,8 @@ export interface TriggerDeps {
  * and notifies via a `system/notification` event. */
 export class TriggerManager {
   private readonly triggers = new Map<string, Trigger>();
-  private readonly unsubscribes: (() => void)[] = [];
-  private readonly watchers: FSWatcher[] = [];
+  /** Per-trigger teardown (event unsubscribe / watcher close), keyed by id so remove() can undo one. */
+  private readonly cleanups = new Map<string, () => void>();
   private timer?: ReturnType<typeof setInterval>;
 
   constructor(private readonly deps: TriggerDeps) {}
@@ -81,6 +86,15 @@ export class TriggerManager {
     this.deps.triggerStore?.save(trigger);
   }
 
+  /** Unregister a trigger (stop it firing) and drop its persisted definition so it stays gone after restart. */
+  remove(id: string): boolean {
+    const existed = this.triggers.delete(id);
+    this.cleanups.get(id)?.();
+    this.cleanups.delete(id);
+    this.deps.triggerStore?.remove(id);
+    return existed;
+  }
+
   /** Wire a trigger's schedule/subscription/watcher into the live manager (no persistence — the reload
    * path calls this directly so a reloaded trigger isn't re-saved). */
   private register(trigger: Trigger): void {
@@ -88,15 +102,14 @@ export class TriggerManager {
     this.triggers.set(trigger.id, trigger);
     if (trigger.spec.type === "event") {
       const spec = trigger.spec;
-      this.unsubscribes.push(
-        this.deps.bus.subscribeDomain(spec.domain, (e) => {
-          if (!spec.eventType || e.type === spec.eventType) void this.fire(trigger, e);
-        }),
-      );
+      const off = this.deps.bus.subscribeDomain(spec.domain, (e) => {
+        if (!spec.eventType || e.type === spec.eventType) void this.fire(trigger, e);
+      });
+      this.cleanups.set(trigger.id, off);
     } else if (trigger.spec.type === "file") {
       const w = watch(trigger.spec.path, () => void this.fire(trigger));
       w.on("error", (err) => this.deps.runLog?.log("trigger_watch_error", `${trigger.id}: ${err.message}`));
-      this.watchers.push(w);
+      this.cleanups.set(trigger.id, () => w.close());
     }
   }
 
@@ -126,10 +139,8 @@ export class TriggerManager {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
-    for (const off of this.unsubscribes) off();
-    for (const w of this.watchers) w.close();
-    this.unsubscribes.length = 0;
-    this.watchers.length = 0;
+    for (const off of this.cleanups.values()) off();
+    this.cleanups.clear();
   }
 
   private async fire(trigger: Trigger, cause?: DomainEvent): Promise<void> {

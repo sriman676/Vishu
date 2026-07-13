@@ -59,8 +59,11 @@ export async function runToolLoop(
       if (deps.approve) {
         const decision = await deps.approve(call);
         if (!decision.allowed) {
-          const denied = `denied: ${decision.reason ?? "not approved"}`;
-          deps.runLog?.log("tool_denied", `${call.name} ${denied}`);
+          // Surface the graded escalation status (blocked | needs_context) so the model can react —
+          // needs_context means "ask the user / provide more", blocked means "policy stop" — not just a bare deny.
+          const status = decision.status ?? "blocked";
+          const denied = `denied (${status}): ${decision.reason ?? "not approved"}`;
+          deps.runLog?.log("tool_denied", `${call.name} [${status}] ${decision.reason ?? "not approved"}`);
           messages.push({ role: "tool", content: denied, toolCallId: call.id, name: call.name });
           continue;
         }

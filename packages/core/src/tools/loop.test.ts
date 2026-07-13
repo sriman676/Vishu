@@ -49,3 +49,31 @@ test("tool loop builds and runs a tiny app inside action_dir, then blocks an esc
     SecurityError,
   );
 });
+
+test("a denied tool call surfaces the escalation status back to the model", async () => {
+  const actionDir = mkdtempSync(join(tmpdir(), "vishu-act-"));
+  const registry = registerBuiltins(new ToolRegistry());
+  const policy = makePolicy("full", actionDir);
+  const router = new Router([
+    new ScriptedProvider([
+      { content: "", finish: "tool_calls", toolCalls: [{ id: "1", name: "write_file", arguments: { path: "x.txt", content: "hi" } }] },
+      { content: "understood", finish: "stop" },
+    ]),
+  ]);
+
+  const result = await runToolLoop(
+    {
+      router,
+      registry,
+      policy,
+      terminal: new Terminal(actionDir),
+      model: "scripted",
+      approve: async () => ({ allowed: false, status: "needs_context", reason: "paused (global pause active)" }),
+    },
+    [{ role: "user", content: "write it" }],
+  );
+
+  const denied = result.messages.find((m) => m.role === "tool" && m.name === "write_file");
+  assert.match(denied?.content ?? "", /denied \(needs_context\): paused/); // status graded, not a bare deny
+  assert.equal(result.final, "understood");
+});

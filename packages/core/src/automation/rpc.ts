@@ -23,6 +23,12 @@ export function registerAutomation(registry: Registry, store: WorkflowStore, man
     return ok({ id: p.id });
   });
 
+  registry.register("vishu.automation_remove_trigger", (params) => {
+    const p = (params ?? {}) as { id?: string };
+    if (!p.id) return err("invalid_params", "id is required");
+    return ok({ id: p.id, removed: manager.remove(p.id) });
+  });
+
   registry.register("vishu.automation_list", () => ok({ workflows: store.list(), triggers: manager.list() }));
 }
 
