@@ -1,5 +1,6 @@
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext } from "../tools/types.js";
+import { makeToolRunner, parseSpec, runDag } from "./dag.js";
 import { Coordinator } from "./coordinator.js";
 import { mergedDiffStat } from "./subagent.js";
 import type { AgentFactory } from "./factory.js";
@@ -41,6 +42,25 @@ export function registerOrchestrationTools(registry: ToolRegistry, deps: { roles
       // commit/push that leaves the sandbox is the gated step (dev_commit = write, dev_push = send/ask).
       if (!result.merged) return result.final;
       return `${result.final}\n\nHarvested into the sandbox — review this diff, then land it with the gated dev_commit / dev_push:\n${mergedDiffStat(ctx.policy.actionDir)}`;
+    },
+  });
+
+  registry.register({
+    name: "run_workflow",
+    meta: { action: "write" },
+    description:
+      "Run a declarative JSON workflow: a DAG of tool nodes {id, tool, args?, needs?}. Nodes run in dependency order; a string arg may reference an upstream node's output with {{nodeId}}. Modes compose as nodes that call a mode-switch tool. Side-effecting classes (send/spend/delete/change_setting) and delegating tools are refused — run those through the normal gated loop.",
+    parameters: {
+      type: "object",
+      properties: {
+        spec: { type: "object", description: "The workflow: { name?, nodes: [{ id, tool, args?, needs? }] }. May also be a JSON string." },
+      },
+      required: ["spec"],
+    },
+    run: async (args, ctx) => {
+      const spec = parseSpec(args.spec);
+      const { order, outputs } = await runDag(spec, makeToolRunner(registry, ctx));
+      return JSON.stringify({ name: spec.name, order, outputs }, null, 2);
     },
   });
 
