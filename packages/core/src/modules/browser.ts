@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { withHeavy } from "../reliability/heavy.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { VishuModule } from "./registry.js";
 
@@ -79,7 +80,9 @@ function locate(page: Page, target: { selector?: string; text?: string }): Locat
 
 async function guarded<T>(fn: () => Promise<T>): Promise<string> {
   try {
-    return String(await fn());
+    // §4b: browser actions (persistent Chrome) count against the heavy-subsystem cap so they don't
+    // thrash alongside the voice sidecars or local LLM.
+    return String(await withHeavy(fn));
   } catch (e) {
     return `error: ${e instanceof Error ? e.message : String(e)}`;
   }

@@ -5,13 +5,16 @@ import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { err, ok } from "../transport/rpc.js";
+import { withHeavy } from "../reliability/heavy.js";
 import type { VishuModule } from "./registry.js";
 
 /** Spawn a sidecar process, send ONE JSON request line, read ONE JSON response line. This is the
  * cross-language IPC seam (stdio JSON, per the locked decision) reused by any sidecar — kept tiny and
  * injectable (argv) so it unit-tests against a stub command without the real Python/whisper installed. */
 export async function callSidecar(argv: string[], request: unknown, timeoutMs = 60_000): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
+  // §4b: a sidecar spawn (whisper.cpp / Piper) is a heavy subsystem — cap concurrency so STT+TTS+browser
+  // don't all run at once and thrash on a 16 GB box.
+  return withHeavy(() => new Promise((resolve, reject) => {
     const p = spawn(argv[0]!, argv.slice(1)); // default stdio is pipe on all three
     let out = "";
     let err = "";
@@ -37,7 +40,7 @@ export async function callSidecar(argv: string[], request: unknown, timeoutMs = 
     });
     p.stdin.write(`${JSON.stringify(request)}\n`);
     p.stdin.end();
-  });
+  }));
 }
 
 export interface SidecarStream {
