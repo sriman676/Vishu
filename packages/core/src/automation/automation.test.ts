@@ -60,6 +60,26 @@ test("an event trigger fires when its EventBus domain event arrives", async () =
   assert.deepEqual(ran, ["triage inbound"]);
 });
 
+test("remove() unregisters a trigger so it stops firing (schedule + event)", async () => {
+  const { store, bus, manager, ran } = setup();
+  store.save({ name: "sched", steps: ["tick"] });
+  store.save({ name: "onmsg", steps: ["triage"] });
+  manager.add({ id: "s1", spec: { type: "schedule", everyMs: 10 }, workflow: "sched" });
+  manager.add({ id: "e1", spec: { type: "event", domain: "channel", eventType: "inbound" }, workflow: "onmsg" });
+
+  assert.equal(manager.remove("s1"), true); // removed
+  assert.equal(manager.remove("nope"), false); // nothing to remove
+  manager.tick(Date.now() + 1000); // schedule trigger is gone → nothing fires
+  await drain();
+  assert.deepEqual(ran, []);
+
+  assert.equal(manager.remove("e1"), true);
+  bus.publish({ domain: "channel", type: "inbound" }); // its subscription was torn down → ignored
+  await drain();
+  assert.deepEqual(ran, []);
+  assert.deepEqual(manager.list(), []); // both gone
+});
+
 test("background runs are parked (not run) unless autonomy is automatic", () => {
   const { store, manager, ran } = setup("ask_every_time");
   store.save({ name: "risky", steps: ["do it"] });

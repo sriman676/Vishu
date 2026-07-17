@@ -1,7 +1,7 @@
 import type { Embedder } from "../providers/types.js";
 import { RunLog } from "../reliability/runlog.js";
 import { MemoryIndex } from "./index.js";
-import { extractLinks, slugify, Vault, type Note } from "./vault.js";
+import { extractLinks, normFolder, slugify, Vault, type Note } from "./vault.js";
 
 /** Age-based confidence decay: a fact halves its ranking weight every HALFLIFE days, so newer facts
  * win near-ties. ponytail: simple exponential half-life; tune HALFLIFE if recall favours stale notes. */
@@ -16,6 +16,8 @@ export interface PutInput {
   type?: string;
   /** Contradiction key: writing a new note with the same subject supersedes the prior one. */
   subject?: string;
+  /** Physical partition under the vault (e.g. "core", "modes/interview"); undefined = root. */
+  folder?: string;
 }
 
 export interface Recalled {
@@ -61,9 +63,9 @@ export class MemoryStore {
     /** Optional: enables semantic recall. Absent = FTS + lexical + smart-walk only (no regression). */
     private readonly embedder?: Embedder,
   ) {
-    this.vault = new Vault(vaultDir);
-    this.index = new MemoryIndex(dbFile);
     this.log = new RunLog(eventLogFile);
+    this.vault = new Vault(vaultDir, this.log); // vault mutations tee to the audit log
+    this.index = new MemoryIndex(dbFile);
     // Self-heal: a fresh/blank index next to a populated vault rebuilds itself on open.
     if (this.index.isEmpty() && this.vault.list().length) this.reindex();
   }
@@ -111,6 +113,7 @@ export class MemoryStore {
       name: this.uniqueName(input.subject ?? input.content),
       type: input.type ?? "fact",
       subject: input.subject,
+      folder: input.folder,
       created: now,
       updated: now,
       body: input.content,
@@ -137,7 +140,12 @@ export class MemoryStore {
 
   /** Hybrid recall: FTS/lexical match, then a one-hop smart-walk over [[links]] to gather context.
    * Superseded notes are excluded; newest wins on ties. Returns only the gathered notes, not a dump. */
-  async recall(query: string, limit = 5): Promise<RecallResult> {
+  async recall(query: string, opts: { limit?: number; folder?: string } = {}): Promise<RecallResult> {
+    const limit = opts.limit ?? 5;
+    // Mode partition: when a folder is given, gather only that partition ∪ core ∪ root (shared);
+    // sibling mode folders are excluded so one mode never recalls another's private notes.
+    const scope = normFolder(opts.folder);
+    const inScope = (f?: string) => !scope || !f || f === scope || f === "core";
     const hits = this.guard(() => this.index.search(query, limit * 2), []);
 
     // Semantic overlay: blend cosine into FTS hits and surface vector-only candidates FTS missed.
@@ -150,7 +158,7 @@ export class MemoryStore {
 
     for (const name of candidates) {
       const note = this.vault.read(name);
-      if (!note || note.supersededBy) continue;
+      if (!note || note.supersededBy || !inScope(note.folder)) continue;
       const fts = ftsScore.get(name) ?? 0;
       if (fts < 0) continue; // superseded per the index
       const lex = lexicalOverlap(query, `${note.subject ?? ""} ${note.body}`);
@@ -161,7 +169,7 @@ export class MemoryStore {
       for (const target of note.links) {
         if (gathered.has(target)) continue;
         const neighbor = this.vault.read(target);
-        if (!neighbor || neighbor.supersededBy) continue;
+        if (!neighbor || neighbor.supersededBy || !inScope(neighbor.folder)) continue;
         gathered.set(neighbor.name, {
           name: neighbor.name,
           type: neighbor.type,
@@ -213,6 +221,54 @@ export class MemoryStore {
     return removed;
   }
 
+  /** §11f ingest lane: connectors write raw inbound here (folder "ingest", transient 7-day tier). Cheap
+   * to add — a matched signal is lifted into working memory via promote(); the rest expire in the sweep. */
+  async ingest(content: string, subject?: string): Promise<Note> {
+    return this.put({ content, subject, type: "ingest", folder: "ingest" });
+  }
+
+  /** Lift a note out of the ingest lane into working memory (root, or a named folder) so the TTL sweep
+   * won't expire it. No-op (undefined) if the note is gone. Returns the moved note. */
+  promote(name: string, folder?: string): Note | undefined {
+    const note = this.vault.read(name);
+    if (!note) return undefined;
+    const moved: Note = { ...note, folder: normFolder(folder), type: note.type === "ingest" ? "fact" : note.type, updated: new Date().toISOString() };
+    this.vault.write(moved); // vault.write moves the file + drops the stale copy
+    this.guard(() => this.index.upsert(moved), undefined);
+    this.log.log("memory_promote", `${name} → ${moved.folder ?? "(working)"}`);
+    return moved;
+  }
+
+  /** §11f tiering sweep: expire ingest notes past ingestTtlDays (the raw firehose is transient), and
+   * move working notes past archiveDays into the "cold" tier (kept on disk, marked by folder). Rebuilds
+   * the index once if anything moved. Returns what expired vs archived. ponytail: age-based tiers; add
+   * value/access scoring only if a blunt TTL starts dropping notes that still matter. */
+  sweepTiers(opts: { ingestTtlDays?: number; archiveDays?: number; now?: number } = {}): { expired: string[]; archived: string[] } {
+    const now = opts.now ?? Date.now();
+    const ingestCut = now - (opts.ingestTtlDays ?? 7) * 86_400_000;
+    const archiveCut = now - (opts.archiveDays ?? 90) * 86_400_000;
+    const expired: string[] = [];
+    const archived: string[] = [];
+    for (const n of this.vault.list()) {
+      if (n.supersededBy) continue;
+      const age = Date.parse(n.updated);
+      if (n.folder === "ingest") {
+        if (age < ingestCut) {
+          this.vault.remove(n.name);
+          expired.push(n.name);
+        }
+      } else if (n.folder !== "cold" && age < archiveCut) {
+        this.vault.write({ ...n, folder: "cold" }); // demote to cold; folder marks the tier, note kept
+        archived.push(n.name);
+      }
+    }
+    if (expired.length || archived.length) {
+      this.reindex();
+      this.log.log("memory_sweep", `expired ${expired.length}, archived ${archived.length}`);
+    }
+    return { expired, archived };
+  }
+
   /** Subjects with more than one *live* note — a contradiction the supersede-on-write path missed
    * (e.g. notes edited directly in Obsidian). Recall already prefers newest; this surfaces the conflict. */
   conflicts(): { subject: string; notes: string[] }[] {
@@ -224,6 +280,33 @@ export class MemoryStore {
       else bySubject.set(n.subject, [n.name]);
     }
     return [...bySubject.entries()].filter(([, names]) => names.length > 1).map(([subject, notes]) => ({ subject, notes }));
+  }
+
+  /** Live notes whose [[links]] point at a target that resolves to no live note (by name or subject
+   * slug) — a dangling reference left by a rename/delete or a typo'd wikilink. */
+  brokenLinks(): { note: string; missing: string[] }[] {
+    const live = this.notes();
+    const targets = new Set<string>();
+    for (const n of live) {
+      targets.add(n.name);
+      if (n.subject) targets.add(slugify(n.subject));
+    }
+    const out: { note: string; missing: string[] }[] = [];
+    for (const n of live) {
+      const missing = n.links.filter((t) => !targets.has(t));
+      if (missing.length) out.push({ note: n.name, missing });
+    }
+    return out;
+  }
+
+  /** Live notes with no outbound and no inbound links — isolated in the graph, easy to lose. */
+  orphans(): string[] {
+    const live = this.notes();
+    const linkedTo = new Set<string>();
+    for (const n of live) for (const t of n.links) linkedTo.add(t);
+    return live
+      .filter((n) => n.links.length === 0 && !linkedTo.has(n.name) && !(n.subject && linkedTo.has(slugify(n.subject))))
+      .map((n) => n.name);
   }
 
   /** Re-derive the whole index from the markdown vault (resets the breaker). */

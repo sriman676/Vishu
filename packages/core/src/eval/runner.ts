@@ -1,4 +1,5 @@
 import { parallelMap } from "../util/parallel.js";
+import { gradeStatus } from "../reliability/status.js";
 import type { EvalReport, EvalResult, EvalTask, Runner } from "./types.js";
 
 /** Run a suite against one runner, grading each answer. A runner that throws scores 0 with the error as
@@ -20,7 +21,8 @@ export async function runEval(
         runErr = e instanceof Error ? e.message : String(e);
       }
       const g = runErr ? { passed: false, score: 0, detail: runErr } : task.grade(output);
-      return { id: task.id, passed: g.passed, score: g.score, ms: Date.now() - start, detail: g.detail };
+      const status = g.status ?? gradeStatus(g.passed, g.score, Boolean(runErr));
+      return { id: task.id, passed: g.passed, score: g.score, ms: Date.now() - start, detail: g.detail, status };
     },
     opts.concurrency ?? 4,
   );

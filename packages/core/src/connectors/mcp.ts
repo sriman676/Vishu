@@ -1,4 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import type { ActionClass } from "../security/actions.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { EventBus } from "../transport/events.js";
 
@@ -52,12 +53,18 @@ export class McpClient {
   constructor(
     private readonly cmd: string,
     private readonly args: string[] = [],
-    private readonly opts: { reconnect?: boolean; sampler?: McpSampler } = {},
+    private readonly opts: { reconnect?: boolean; sampler?: McpSampler; cwd?: string } = {},
   ) {}
 
   async start(): Promise<void> {
     this.stopped = false;
-    const child = spawn(this.cmd, this.args, { stdio: ["pipe", "pipe", "pipe"] });
+    // Windows can't spawn a bare command that resolves to a .cmd/.bat (npx, npm) — it throws EINVAL
+    // post-CVE-2024-27980. Route bare names through `cmd /c` (shell:false keeps Node auto-quoting args,
+    // so a spaced arg stays safe). Absolute paths (e.g. node.exe) still spawn directly, unchanged.
+    // ponytail: bare-name heuristic; an absolute path to a .cmd would still need wrapping — rare, skip it.
+    const [cmd, args] =
+      process.platform === "win32" && !/[\\/]/.test(this.cmd) ? ["cmd", ["/c", this.cmd, ...this.args]] : [this.cmd, this.args];
+    const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], cwd: this.opts.cwd });
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (d: string) => this.onData(d));
     child.on("error", (e) => this.failAll(e));
@@ -200,15 +207,19 @@ export async function registerMcpTools(
   client: McpClient,
   serverId: string,
   bus?: EventBus,
+  /** Per-tool action class (by remote tool name); undefined ⇒ the gate's name heuristic applies. */
+  action?: (tool: string) => ActionClass | undefined,
 ): Promise<string[]> {
   const tools = await client.listTools();
   const names: string[] = [];
   for (const t of tools) {
     const name = `${serverId}__${t.name}`;
+    const act = action?.(t.name);
     registry.register({
       name,
       description: t.description ?? `MCP tool ${t.name} from ${serverId}`,
       parameters: t.inputSchema ?? { type: "object", properties: {} },
+      ...(act ? { meta: { action: act } } : {}),
       run: (args) => client.callTool(t.name, args),
     });
     names.push(name);

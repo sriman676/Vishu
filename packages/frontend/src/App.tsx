@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { startTurn, subscribeEvents } from "./api.js";
-import { Eval, Memory, Settings } from "./Panels.js";
+import { type Mode, modeActivate, modeList, startTurn, subscribeEvents } from "./api.js";
+import { Orb } from "./Orb.js";
+import { Activity, Board, Calendar, Eval, Inbox, Matters, Memory, Settings } from "./Panels.js";
 import { Tokens } from "./Tokens.js";
 
-type Tab = "chat" | "notifications" | "tokens" | "eval" | "memory" | "settings";
+type Tab = "chat" | "inbox" | "matters" | "board" | "calendar" | "activity" | "notifications" | "tokens" | "eval" | "memory" | "settings";
 
 interface Msg {
   role: "user" | "assistant" | "error";
@@ -18,13 +19,21 @@ export function App() {
   const [notifs, setNotifs] = useState<string[]>([]);
   const [seen, setSeen] = useState(0);
   const [model, setModel] = useState(() => localStorage.getItem("vishu.model") ?? "");
+  const [voiceOut, setVoiceOut] = useState(() => localStorage.getItem("vishu.voiceOut") === "1");
+  const [handsFree, setHandsFree] = useState(false);
+  const [modes, setModes] = useState<Mode[]>([]);
+  const [activeMode, setActiveMode] = useState("");
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<Tab>("chat");
   const sessionId = useRef<string | undefined>(undefined);
   const log = useRef<HTMLDivElement>(null);
+  const handsFreeRef = useRef(false); // read inside recognition callbacks (avoids stale state)
+  const recRef = useRef<{ start: () => void; stop: () => void } | null>(null);
+  const busyRef = useRef(false);
 
   useEffect(() => localStorage.setItem("vishu.token", token), [token]);
   useEffect(() => localStorage.setItem("vishu.model", model), [model]);
+  useEffect(() => localStorage.setItem("vishu.voiceOut", voiceOut ? "1" : "0"), [voiceOut]);
   useEffect(() => {
     if (tab === "notifications") setSeen(notifs.length);
   }, [tab, notifs.length]);
@@ -46,6 +55,10 @@ export function App() {
   }, []);
   useEffect(() => {
     if (!token) return;
+    modeList(token).then((r) => { setModes(r.modes); setActiveMode(r.active); }).catch(() => {});
+  }, [token]);
+  useEffect(() => {
+    if (!token) return;
     return subscribeEvents(token, (e) => {
       const s = JSON.stringify(e);
       setEvents((prev) => [...prev.slice(-49), s]);
@@ -59,7 +72,33 @@ export function App() {
     if (shared) setInput((cur) => cur || shared);
   }, []);
 
+  // Speak the assistant reply in the active mode's voice (§8): match the mode's voiceId hint loosely against
+  // the browser's installed SpeechSynthesis voices; fall back to the default when none matches.
+  function speak(text: string) {
+    if (!voiceOut || !("speechSynthesis" in window)) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    const want = modes.find((m) => m.name === activeMode)?.voiceId;
+    if (want) {
+      const v = speechSynthesis.getVoices().find((v) => v.name.toLowerCase().includes(want.toLowerCase()));
+      if (v) u.voice = v;
+    }
+    speechSynthesis.speak(u);
+  }
+
+  async function switchMode(name: string) {
+    if (!name || name === activeMode) return;
+    const prev = activeMode;
+    setActiveMode(name); // optimistic
+    const r = await modeActivate(token, name).catch(() => ({ activated: false, reason: "rpc failed" }));
+    if (!r.activated) {
+      setActiveMode(prev);
+      alert(`Couldn't switch mode: ${r.reason ?? "unknown"}`);
+    }
+  }
+
   function startVoice() {
+    if ("speechSynthesis" in window) speechSynthesis.cancel(); // barge-in: stop TTS the moment the mic opens
     const SR = (window as unknown as { webkitSpeechRecognition?: new () => any; SpeechRecognition?: new () => any });
     const Ctor = SR.SpeechRecognition ?? SR.webkitSpeechRecognition;
     if (!Ctor) return alert("Voice capture isn't supported in this browser.");
@@ -69,16 +108,17 @@ export function App() {
     rec.start();
   }
 
-  async function send() {
-    const message = input.trim();
+  async function send(override?: string) {
+    const message = (override ?? input).trim();
     if (!message || busy) return;
-    setInput("");
+    if (override === undefined) setInput("");
     setMsgs((m) => [...m, { role: "user", content: message }]);
     setBusy(true);
     try {
       const r = await startTurn(token, message, sessionId.current, model || undefined);
       sessionId.current = r.sessionId;
       setMsgs((m) => [...m, { role: "assistant", content: r.final }]);
+      speak(r.final);
     } catch (e) {
       setMsgs((m) => [...m, { role: "error", content: e instanceof Error ? e.message : String(e) }]);
     } finally {
@@ -86,20 +126,65 @@ export function App() {
     }
   }
 
+  // Full-duplex hands-free voice (§11b): continuous recognition auto-sends each final utterance, the reply is
+  // spoken, and a new utterance barges in (cancels TTS) mid-reply — no button between turns. Refs keep the
+  // recognition callbacks reading current busy/send. ponytail: relies on the browser's mic echo-cancellation
+  // to not hear its own TTS; upgrade path is a wake-word or muting recognition during synthesis.
+  busyRef.current = busy;
+  const sendRef = useRef(send);
+  sendRef.current = send;
+
+  function startHandsFree() {
+    const SR = window as unknown as { webkitSpeechRecognition?: new () => any; SpeechRecognition?: new () => any };
+    const Ctor = SR.SpeechRecognition ?? SR.webkitSpeechRecognition;
+    if (!Ctor) return alert("Voice capture isn't supported in this browser.");
+    const rec = new Ctor();
+    rec.continuous = true;
+    rec.interimResults = false;
+    rec.lang = "en-US";
+    rec.onresult = (e: any) => {
+      const r = e.results[e.results.length - 1];
+      if (!r?.isFinal || busyRef.current) return;
+      if ("speechSynthesis" in window) speechSynthesis.cancel(); // barge-in: cut the reply when the user speaks
+      void sendRef.current(r[0].transcript);
+    };
+    rec.onend = () => { if (handsFreeRef.current) try { rec.start(); } catch { /* browser auto-restarts after silence */ } };
+    rec.onerror = (e: any) => { if (e.error === "not-allowed" || e.error === "service-not-allowed") stopHandsFree(); };
+    recRef.current = rec;
+    handsFreeRef.current = true;
+    setHandsFree(true);
+    setVoiceOut(true); // full-duplex is pointless muted
+    try { rec.start(); } catch { /* ignore double-start */ }
+  }
+  function stopHandsFree() {
+    handsFreeRef.current = false;
+    setHandsFree(false);
+    try { recRef.current?.stop(); } catch { /* ignore */ }
+  }
+  useEffect(() => () => { try { recRef.current?.stop(); } catch { /* unmount */ } }, []);
+
   return (
     <div style={S.page}>
       <header style={S.header}>
         <strong style={{ fontSize: 18, letterSpacing: "-0.02em", color: "var(--accent)", fontFamily: "var(--font-display)" }}>Vishu</strong>
+        <Orb />
         <nav style={S.tabs}>
-          {(["chat", "notifications", "tokens", "eval", "memory", "settings"] as Tab[]).map((t) => (
+          {(["chat", "inbox", "matters", "board", "calendar", "activity", "notifications", "tokens", "eval", "memory", "settings"] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? "btn on" : "btn"} onClick={() => setTab(t)} disabled={t !== "chat" && !token}>
               {t === "notifications" ? `Notifications${notifs.length > seen ? ` (${notifs.length - seen})` : ""}` : t[0].toUpperCase() + t.slice(1)}
             </button>
           ))}
         </nav>
+        {modes.length > 0 && (
+          <select className="input" style={{ marginLeft: "auto", width: 150 }} value={activeMode} onChange={(e) => switchMode(e.target.value)} title="Active persona/mode">
+            {modes.map((m) => (
+              <option key={m.name} value={m.name}>{m.name}</option>
+            ))}
+          </select>
+        )}
         <input
           className="input"
-          style={{ marginLeft: "auto", width: 280 }}
+          style={{ marginLeft: modes.length > 0 ? undefined : "auto", width: 280 }}
           type="password"
           placeholder="paste core.token"
           value={token}
@@ -107,6 +192,11 @@ export function App() {
         />
       </header>
 
+      {tab === "inbox" && <Inbox token={token} />}
+      {tab === "matters" && <Matters token={token} />}
+      {tab === "board" && <Board token={token} />}
+      {tab === "calendar" && <Calendar token={token} />}
+      {tab === "activity" && <Activity events={events} />}
       {tab === "tokens" && <Tokens token={token} />}
       {tab === "eval" && <Eval token={token} />}
       {tab === "memory" && <Memory token={token} />}
@@ -151,10 +241,16 @@ export function App() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
         />
-        <button className="btn" onClick={startVoice} disabled={!token} title="Voice capture">
+        <button className="btn" onClick={startVoice} disabled={!token || handsFree} title="Push-to-talk: dictate one message into the box">
           🎤
         </button>
-        <button className="btn primary" onClick={send} disabled={!token || busy || !input.trim()}>
+        <button className={handsFree ? "btn on" : "btn"} onClick={() => (handsFree ? stopHandsFree() : startHandsFree())} disabled={!token} title="Hands-free full-duplex voice: continuous listen → auto-send → speak → barge-in">
+          {handsFree ? "🟢 Live" : "📞"}
+        </button>
+        <button className={voiceOut ? "btn on" : "btn"} onClick={() => setVoiceOut((v) => !v)} title="Speak replies aloud">
+          {voiceOut ? "🔊" : "🔈"}
+        </button>
+        <button className="btn primary" onClick={() => send()} disabled={!token || busy || !input.trim()}>
           {busy ? "…" : "Send"}
         </button>
       </footer>

@@ -1,7 +1,28 @@
 import { createServer, type Server } from "node:http";
+import { readFile } from "node:fs/promises";
+import { extname, join, normalize, sep } from "node:path";
 import { checkBearer } from "./auth.js";
 import type { EventBus } from "./events.js";
 import { type JsonRpcRequest, type Registry } from "./rpc.js";
+
+const MIME: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" };
+
+/** Serve a static file from `webRoot` for a GET path, with a traversal guard (never escape webRoot).
+ * Unauthed by design — the shell is just HTML/JS; the RPC/SSE it calls still carry the bearer token.
+ * Returns true if it handled the request. ponytail: tiny file server, no caching/range — a shell is small. */
+async function serveStatic(webRoot: string, urlPath: string, res: import("node:http").ServerResponse, cors: Record<string, string>): Promise<boolean> {
+  const rel = decodeURIComponent(urlPath.split("?")[0] ?? "").replace(/^\/+/, "") || "index.html";
+  const full = normalize(join(webRoot, rel));
+  if (full !== webRoot && !full.startsWith(webRoot + sep)) return false; // traversal blocked
+  try {
+    const buf = await readFile(full);
+    res.writeHead(200, { "content-type": MIME[extname(full)] ?? "application/octet-stream", ...cors });
+    res.end(buf);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export interface RunningServer {
   port: number;
@@ -39,8 +60,9 @@ async function readBody(req: import("node:http").IncomingMessage, limit = 1_000_
 
 /** Start the JSON-RPC + health HTTP server, bound to loopback only. `corsOrigins` allows the packaged
  * desktop webview to reach the core cross-origin (defaults to the Tauri origins). */
-export function startServer(registry: Registry, host: string, port: number, eventBus?: EventBus, corsOrigins?: string[]): Promise<RunningServer> {
+export function startServer(registry: Registry, host: string, port: number, eventBus?: EventBus, corsOrigins?: string[], webRoot?: string): Promise<RunningServer> {
   const allowed = corsOrigins ?? DEFAULT_CORS_ORIGINS;
+  const root = webRoot ? normalize(webRoot) : undefined;
   const server: Server = createServer((req, res) => {
     void (async () => {
       const cors = corsHeadersFor(req.headers.origin, allowed);
@@ -71,6 +93,9 @@ export function startServer(registry: Registry, host: string, port: number, even
         req.on("close", off);
         return;
       }
+
+      // Static UI shell (11g): serve GET paths from the web root when configured. RPC/SSE keep their auth.
+      if (req.method === "GET" && root && (await serveStatic(root, req.url ?? "/", res, cors))) return;
 
       if (req.method !== "POST" || req.url !== "/rpc") {
         return send(404, { jsonrpc: "2.0", id: null, error: { code: -32601, message: "Not found" } });

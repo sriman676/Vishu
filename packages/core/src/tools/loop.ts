@@ -1,8 +1,10 @@
 import type { Router } from "../providers/router.js";
 import type { ChatMessage, ToolCall } from "../providers/types.js";
-import type { ApprovalDecision } from "../reliability/approvals.js";
+import type { ApprovalDecision, AskFn } from "../reliability/approvals.js";
 import { estimateTokens, type Budget } from "../reliability/budget.js";
 import type { RunLog } from "../reliability/runlog.js";
+import type { Tracer } from "../reliability/trace.js";
+import { redact } from "../security/dlp.js";
 import type { SecurityPolicy } from "../security/policy.js";
 import { compactTranscript } from "../tokenjuice/compact.js";
 import { summarizeToolResult } from "../tokenjuice/summarize.js";
@@ -25,8 +27,13 @@ export interface ToolLoopDeps {
   budget?: Budget;
   /** Risk-scoped approval gate; absent = auto-allow all. */
   approve?: (call: ToolCall) => Promise<ApprovalDecision>;
+  /** Raw human approval channel, passed to delegating tools (dispatch/orchestrate) via ToolContext so
+   * their subagents can request approval rather than only deny. Separate from `approve` (the gate). */
+  ask?: AskFn;
   /** Compact the transcript before each provider call (default true). */
   compact?: boolean;
+  /** Span tracer (PAUL): times each tool execution. Absent → no tracing (fn still runs). */
+  tracer?: Tracer;
 }
 
 /** provider → tool calls → execute (security + approval gated) → feed results back → repeat,
@@ -52,8 +59,11 @@ export async function runToolLoop(
       if (deps.approve) {
         const decision = await deps.approve(call);
         if (!decision.allowed) {
-          const denied = `denied: ${decision.reason ?? "not approved"}`;
-          deps.runLog?.log("tool_denied", `${call.name} ${denied}`);
+          // Surface the graded escalation status (blocked | needs_context) so the model can react —
+          // needs_context means "ask the user / provide more", blocked means "policy stop" — not just a bare deny.
+          const status = decision.status ?? "blocked";
+          const denied = `denied (${status}): ${decision.reason ?? "not approved"}`;
+          deps.runLog?.log("tool_denied", `${call.name} [${status}] ${decision.reason ?? "not approved"}`);
           messages.push({ role: "tool", content: denied, toolCallId: call.id, name: call.name });
           continue;
         }
@@ -61,12 +71,13 @@ export async function runToolLoop(
 
       let output: string;
       try {
-        output = await deps.registry.get(call.name).run(call.arguments, { policy: deps.policy, terminal: deps.terminal });
+        const runTool = () => deps.registry.get(call.name).run(call.arguments, { policy: deps.policy, terminal: deps.terminal, ask: deps.ask });
+        output = await (deps.tracer ? deps.tracer.span(`tool:${call.name}`, runTool) : runTool());
       } catch (e) {
         // ponytail: tool failure feeds back as an error message so the model can recover (fault isolation).
         output = `error: ${e instanceof Error ? e.message : String(e)}`;
       }
-      output = summarizeToolResult(output);
+      output = redact(summarizeToolResult(output)); // DLP: strip secrets/PII before it re-enters the transcript
       deps.runLog?.log("tool_result", output.slice(0, 200));
       messages.push({ role: "tool", content: output, toolCallId: call.id, name: call.name });
     }

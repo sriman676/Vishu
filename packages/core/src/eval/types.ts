@@ -1,8 +1,12 @@
-/** One task's grade: passed (binary) + a 0..1 score (room for partial credit) + an optional note. */
+import type { EscalationStatus } from "../reliability/status.js";
+
+/** One task's grade: passed (binary) + a 0..1 score (room for partial credit) + an optional note.
+ * A grader may set `status` explicitly; otherwise the runner derives it (PAUL escalation). */
 export interface Grade {
   passed: boolean;
   score: number;
   detail?: string;
+  status?: EscalationStatus;
 }
 
 /** An eval task: a prompt and a deterministic grader over the produced answer (no LLM judge — gating
@@ -23,6 +27,7 @@ export interface EvalResult {
   score: number;
   ms: number;
   detail?: string;
+  status: EscalationStatus;
 }
 
 export interface EvalReport {

@@ -1,9 +1,11 @@
 import type { Router } from "../providers/router.js";
+import type { AskFn } from "../reliability/approvals.js";
 import type { RunLog } from "../reliability/runlog.js";
 import type { SecurityPolicy } from "../security/policy.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { parallelMap } from "../util/parallel.js";
-import { ARCHETYPES } from "./archetypes.js";
+import { ARCHETYPES, type Archetype, synthesizeArchetype } from "./archetypes.js";
+import type { AgentFactory } from "./factory.js";
 import { commandValidator, harvestBranch, runSubagent, type ValidationResult } from "./subagent.js";
 
 type SubagentOutcome = Awaited<ReturnType<typeof runSubagent>>;
@@ -15,6 +17,15 @@ export interface CoordinatorDeps {
   parentRegistry: ToolRegistry;
   repoDir: string;
   runLog?: RunLog;
+  /** Approve subagents' gated actions (UPGRADES §4). Absent → deny-only (fail-closed): a supervised
+   * orchestration can pass a real ask so a subagent requests approval instead of only being blocked. */
+  ask?: AskFn;
+  /** Extended-thinking budget for the orchestrator's own decision calls (hypothesis/dispatch routing).
+   * Applies to the coordinator's reasoning only — never handed to subagents' tool loops. */
+  thinkingBudget?: number;
+  /** Approved bespoke agents from the factory. When set, `dispatch` routes a task naming one of them to
+   * that agent (Step 5 loop closure) — approved agents become runtime-routable, ahead of generic presets. */
+  factory?: AgentFactory;
 }
 
 export interface CoordinatorOptions {
@@ -50,6 +61,23 @@ export interface OrchestrationResult {
   merged: boolean;
 }
 
+/** How `dispatch` routes an intent to a preset archetype. First rule that matches wins, so order is
+ * specificity: review/test before build, build before research, research before plan. */
+const PRESET_RULES: [RegExp, string][] = [
+  [/\b(review|audit|critique|test|verify|check)\b/, "critic"],
+  [/\b(implement|build|code|write|fix|refactor|create|add|edit)\b/, "coder"],
+  [/\b(research|investigate|gather|find out|look up|summar)\b/, "researcher"],
+  [/\b(plan|design|outline|break down|steps)\b/, "planner"],
+];
+
+/** The routing outcome for a single task: a preset/synthesized archetype to execute, or a clarifying
+ * question when the task is too vague to act on. (A `mode` arm — interview/teacher/… personas — lands in
+ * Phase 4 when orchestration/modes.ts exists; deferred here, not invented.) */
+export type DispatchDecision =
+  | { kind: "archetype"; archetype: Archetype }
+  | { kind: "synthesized"; archetype: Archetype }
+  | { kind: "clarify"; question: string };
+
 /** Strip "1. ", "- ", "* " and blanks; the provider's free-text list → discrete hypotheses. */
 function parseHypotheses(text: string, max: number): string[] {
   const lines = text
@@ -65,6 +93,66 @@ function parseHypotheses(text: string, max: number): string[] {
 export class Coordinator {
   constructor(private readonly deps: CoordinatorDeps) {}
 
+  /** Route ONE task to an executor without fanning out: a preset archetype when the intent clearly matches
+   * one, a synthesized archetype for a novel task, or a single clarifying question when the task is too
+   * vague to act on. Deterministic keyword routing — ponytail ceiling: an LLM classifier is the upgrade
+   * path when the rules misroute. Mode routing is deferred to Phase 4 (see DispatchDecision). */
+  dispatch(task: string): DispatchDecision {
+    const words = task.trim().split(/\s+/).filter(Boolean);
+    if (words.length < 3) {
+      return { kind: "clarify", question: `"${task.trim()}" is too brief to route — tell me the goal and any target (file, repo, or topic).` };
+    }
+    const lower = task.toLowerCase();
+    const agents = this.deps.factory?.agents() ?? [];
+    // 1. A bespoke agent NAMED in the task wins outright — deliberately-built beats keyword defaults.
+    //    Name matched as a whole word (escaped, so any name is literal).
+    const named = agents.find((a) => new RegExp(`\\b${a.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(lower));
+    if (named) return { kind: "archetype", archetype: named };
+    // 2. Generic intent → a preset role (coder/critic/researcher/planner).
+    for (const [re, name] of PRESET_RULES) {
+      if (re.test(lower)) return { kind: "archetype", archetype: ARCHETYPES[name]! };
+    }
+    // 3. Routing recall: a task that DESCRIBES an existing agent's job (≥2 shared significant words with
+    //    the task it was built for) reuses that agent instead of synthesizing a new one. Runs only after
+    //    presets, so fuzzy overlap never hijacks a clear generic intent. Ceiling: an LLM classifier.
+    const sig = (s: string) => new Set(s.toLowerCase().split(/\W+/).filter((w) => w.length >= 5));
+    const taskSig = sig(task);
+    let best: Archetype | undefined;
+    let bestOverlap = 1; // strictly greater ⇒ require ≥2 shared significant words
+    for (const a of agents) {
+      if (!a.task) continue;
+      const overlap = [...sig(a.task)].filter((w) => taskSig.has(w)).length;
+      if (overlap > bestOverlap) [best, bestOverlap] = [a, overlap];
+    }
+    if (best) return { kind: "archetype", archetype: best };
+    // 4. Genuinely novel → a synthesized bespoke archetype (tools ⊆ parent).
+    return { kind: "synthesized", archetype: synthesizeArchetype(task, this.deps.parentRegistry) };
+  }
+
+  /** Route ONE task with `dispatch`, then actually run the chosen archetype as an isolated subagent —
+   * the runtime path that makes approved agents routable. A too-vague task returns its clarifying
+   * question instead of executing. The subagent gates its own side effects via `deps.ask` (deny-only
+   * when absent), same contract as every other subagent. */
+  async dispatchAndRun(task: string): Promise<string> {
+    const decision = this.dispatch(task);
+    if (decision.kind === "clarify") return decision.question;
+    this.deps.runLog?.log("dispatch", `${decision.kind}:${decision.archetype.name} ← ${task}`);
+    const outcome = await runSubagent({
+      archetype: decision.archetype,
+      task,
+      parentContext: `Task: ${task}`,
+      parentPolicy: this.deps.parentPolicy,
+      parentRegistry: this.deps.parentRegistry,
+      router: this.deps.router,
+      model: this.deps.model,
+      repoDir: this.deps.repoDir,
+      runLog: this.deps.runLog,
+      ask: this.deps.ask,
+      harvest: true,
+    });
+    return outcome.final;
+  }
+
   async run(goal: string, opts: CoordinatorOptions = {}): Promise<OrchestrationResult> {
     const max = opts.maxBranches ?? 3;
     const res = await this.deps.router.chat({
@@ -74,6 +162,7 @@ export class Coordinator {
         { role: "user", content: `List up to ${max} distinct approaches to accomplish:\n${goal}` },
       ],
       category: "orchestration",
+      ...(this.deps.thinkingBudget ? { thinking: { budgetTokens: this.deps.thinkingBudget } } : {}),
     });
     const hypotheses = parseHypotheses(res.content, max);
     if (hypotheses.length === 0) hypotheses.push(goal); // degrade: treat the goal itself as the one branch
@@ -95,6 +184,7 @@ export class Coordinator {
       model: this.deps.model,
       repoDir: this.deps.repoDir,
       runLog: this.deps.runLog,
+      ask: this.deps.ask,
       harvest,
       keepWorktree,
       validate: opts.validate

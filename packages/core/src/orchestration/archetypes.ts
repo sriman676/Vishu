@@ -34,6 +34,28 @@ export const ARCHETYPES: Record<string, Archetype> = {
   },
 };
 
+/** Synthesize an archetype for a novel task that fits none of the presets. Deterministic (no LLM here —
+ * the LLM-drafted variant is the Phase 1 Step 5 agent factory): the role prompt is built from the task,
+ * and its tool policy is the parent's tools whose name/description mentions a task keyword. So the set is
+ * a subset of parent BY CONSTRUCTION, and `narrowRegistry` enforces that again. Falls back to the parent's
+ * read-only core when nothing matches — never an empty toolset, never a tool the parent lacks.
+ * ponytail: keyword relevance, not embeddings — upgrade to the factory's cited-skills draft when a novel
+ * task needs a real bespoke prompt. */
+export function synthesizeArchetype(task: string, parent: ToolRegistry): Archetype {
+  const words = new Set(task.toLowerCase().match(/[a-z]{4,}/g) ?? []);
+  const schemas = parent.schemas();
+  const relevant = schemas
+    .filter((s) => [...words].some((w) => `${s.name} ${s.description}`.toLowerCase().includes(w)))
+    .map((s) => s.name);
+  const READONLY_CORE = ["read_file", "list_dir", "memory_recall", "web_search", "skill_search"];
+  const tools = relevant.length ? relevant : schemas.map((s) => s.name).filter((n) => READONLY_CORE.includes(n));
+  return {
+    name: "synth",
+    system: `You are a specialist assembled for this task:\n${task}\nUse only the tools provided. Do not orchestrate or spawn other agents.`,
+    tools,
+  };
+}
+
 const TIER_RANK: Record<Tier, number> = { readonly: 0, supervised: 1, full: 2 };
 
 /** Inherit-and-narrow: a subagent's tier can only drop, never rise above the parent's. */

@@ -1,0 +1,13 @@
+{
+  "domains": [
+    {
+      "id": "composio",
+      "note": "§11c: Composio's MCP server → 1000+ apps as namespaced composio__* tools. STUB — set COMPOSIO_API_KEY in .env and confirm the launch command matches your Composio CLI version; an unconfigured/missing binary is skipped at startup, never crashes serve. No `actions` map on purpose: each tool falls to the F0 gate's name heuristic (classifyTool), so composio__GMAIL_SEND_EMAIL classifies as send (always asks) while composio__*_FETCH_* classifies as read (auto). A blanket '*' override would wrongly declassify the send/delete tools.",
+      "requireEnv": "COMPOSIO_API_KEY",
+      "cmd": "npx",
+      "args": ["-y", "@composio/mcp@latest", "start", "--transport", "stdio"],
+      "reconnect": false,
+      "egressHosts": ["mcp.composio.dev", "backend.composio.dev", "api.composio.dev"]
+    }
+  ]
+}

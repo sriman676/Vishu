@@ -1,5 +1,7 @@
 import type { ProviderConfig } from "../config/config.js";
 import type { Cassette } from "../replay/cassette.js";
+import type { Tracer } from "../reliability/trace.js";
+import { redactEmail } from "../security/dlp.js";
 import type { UsageLog } from "../usage/log.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { EchoProvider } from "./mock.js";
@@ -26,6 +28,20 @@ function bindModel(p: Provider, model: string): Provider {
   };
 }
 
+/** Redact email PII from outbound messages for a CLOUD endpoint (local backends see raw text — they're
+ * on-device and private). Applied at build time so it covers chat + chatStream without a Router change. */
+export function redactEmailsOutbound(p: Provider): Provider {
+  if (p.local) return p;
+  const scrub = (req: ChatRequest): ChatRequest => ({ ...req, messages: req.messages.map((m) => ({ ...m, content: redactEmail(m.content) })) });
+  return {
+    name: p.name,
+    local: p.local,
+    chat: (req) => p.chat(scrub(req)),
+    chatStream: (req, onDelta) => p.chatStream(scrub(req), onDelta),
+    embed: p.embed ? (texts) => p.embed!(texts) : undefined,
+  };
+}
+
 /** One endpoint per API key for a single provider config; key rotation/balance happens across these. */
 function providerEndpoints(cfg: ProviderConfig, label: string): Provider[] {
   if (cfg.type === "mock") return [new EchoProvider()];
@@ -33,9 +49,11 @@ function providerEndpoints(cfg: ProviderConfig, label: string): Provider[] {
   const keys = cfg.apiKeys.length ? cfg.apiKeys : [""];
   return keys.map((apiKey, i) => {
     const name = `${label}(${cfg.keyLabels[i] ?? `backup${i}`})`;
-    return cfg.type === "anthropic"
-      ? new AnthropicProvider({ name, baseUrl: cfg.baseUrl, apiKey })
-      : new OpenAICompatibleProvider({ name, baseUrl: cfg.baseUrl, apiKey });
+    const p =
+      cfg.type === "anthropic"
+        ? new AnthropicProvider({ name, baseUrl: cfg.baseUrl, apiKey })
+        : new OpenAICompatibleProvider({ name, baseUrl: cfg.baseUrl, apiKey });
+    return redactEmailsOutbound(p);
   });
 }
 
@@ -49,11 +67,11 @@ function localEndpoint(env = process.env): Provider | undefined {
 
 /** Build a Router from one provider config: one endpoint per API key so failover/balance rotate keys.
  * Pass a UsageLog to capture per-call token usage; a Cassette to record/replay calls. */
-export function buildRouter(cfg: ProviderConfig, usageLog?: UsageLog, cassette?: Cassette): Router {
+export function buildRouter(cfg: ProviderConfig, usageLog?: UsageLog, cassette?: Cassette, tracer?: Tracer): Router {
   const endpoints = providerEndpoints(cfg, cfg.type);
   const local = localEndpoint();
   if (local) endpoints.push(local);
-  return new Router(endpoints, usageLog, cassette, keyMode());
+  return new Router(endpoints, usageLog, cassette, keyMode(), tracer);
 }
 
 /** Multi-provider pool: span every named provider (each bound to its own model) plus an optional local LLM
@@ -61,7 +79,7 @@ export function buildRouter(cfg: ProviderConfig, usageLog?: UsageLog, cassette?:
  * whole pool (parallel), `failover` tries them one after another, `local` prefers the on-device model.
  * ponytail: token-report attribution uses the request's model, not each endpoint's bound model — the
  * per-model breakdown is approximate under pooling; thread the bound model through usage to make it exact. */
-export function buildPoolRouter(providers: Record<string, ProviderConfig>, usageLog?: UsageLog, cassette?: Cassette): Router {
+export function buildPoolRouter(providers: Record<string, ProviderConfig>, usageLog?: UsageLog, cassette?: Cassette, tracer?: Tracer): Router {
   const endpoints: Provider[] = [];
   for (const [name, cfg] of Object.entries(providers)) {
     for (const ep of providerEndpoints(cfg, name)) endpoints.push(bindModel(ep, cfg.model));
@@ -69,5 +87,5 @@ export function buildPoolRouter(providers: Record<string, ProviderConfig>, usage
   const local = localEndpoint();
   if (local) endpoints.push(local);
   if (!endpoints.length) throw new Error("[pool] no providers configured");
-  return new Router(endpoints, usageLog, cassette, keyMode());
+  return new Router(endpoints, usageLog, cassette, keyMode(), tracer);
 }

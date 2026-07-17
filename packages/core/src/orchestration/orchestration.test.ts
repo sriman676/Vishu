@@ -5,12 +5,16 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { EchoProvider, ScriptedProvider } from "../providers/mock.js";
 import { Router } from "../providers/router.js";
+import type { ChatResponse, Provider } from "../providers/types.js";
 import { makePolicy } from "../security/policy.js";
 import { registerBuiltins } from "../tools/builtins.js";
 import { ToolRegistry } from "../tools/registry.js";
-import { ARCHETYPES, narrowRegistry, narrowTier } from "./archetypes.js";
+import type { Tool } from "../tools/types.js";
+import { SkillIndex } from "../skills/index.js";
+import { ARCHETYPES, narrowRegistry, narrowTier, synthesizeArchetype } from "./archetypes.js";
 import { council, mixtureOfAgents } from "./council.js";
 import { Coordinator } from "./coordinator.js";
+import { AgentFactory } from "./factory.js";
 import { NoParentContextError, runSubagent } from "./subagent.js";
 
 test("council: members answer, judge picks the winner", async () => {
@@ -63,6 +67,27 @@ test("inherit-and-narrow: tier only drops, tools are parent ∩ archetype", () =
   assert.deepEqual(names, ["list_dir", "read_file", "run_shell"]); // memory_recall absent from parent → can't appear
 });
 
+test("synthesizeArchetype: a novel task yields tools ⊆ parent registry (never widens, never empty)", () => {
+  const parent = registerBuiltins(new ToolRegistry());
+  const parentNames = new Set(parent.schemas().map((s) => s.name));
+
+  const arch = synthesizeArchetype("read the config file and search the web for the answer", parent);
+  const tools = arch.tools as string[];
+  assert.ok(tools.length > 0, "synthesized toolset is never empty");
+  assert.ok(tools.every((t) => parentNames.has(t)), "every tool is one the parent has (⊆ parent)");
+  assert.ok(tools.includes("read_file") && tools.includes("web_search"), "keyword-relevant tools selected");
+
+  // narrowRegistry enforces the ⊆-parent invariant a second time.
+  const child = narrowRegistry(parent, arch);
+  assert.ok(child.schemas().every((s) => parentNames.has(s.name)));
+
+  // A task with no tool-relevant keywords falls back to the parent's read-only core, still ⊆ parent.
+  const fallback = synthesizeArchetype("ponder existential questions quietly", parent);
+  const fbTools = fallback.tools as string[];
+  assert.ok(fbTools.length > 0 && fbTools.every((t) => parentNames.has(t)));
+  assert.ok(!fbTools.includes("run_shell") && !fbTools.includes("write_file"), "fallback is read-only");
+});
+
 test("subagent refuses to spawn without parent context (NoParentContext contract)", async () => {
   await assert.rejects(
     runSubagent({
@@ -77,6 +102,60 @@ test("subagent refuses to spawn without parent context (NoParentContext contract
     }),
     NoParentContextError,
   );
+});
+
+test("dispatch: routes to preset archetype | synthesized | clarify", () => {
+  const coordinator = new Coordinator({
+    router: new Router([new EchoProvider()]),
+    model: "mock",
+    parentPolicy: makePolicy("full", mkdtempSync(join(tmpdir(), "vishu-disp-"))),
+    parentRegistry: registerBuiltins(new ToolRegistry()),
+    repoDir: mkdtempSync(join(tmpdir(), "vishu-disp-")),
+  });
+
+  const review = coordinator.dispatch("review the auth module and run the tests");
+  assert.equal(review.kind, "archetype");
+  assert.equal(review.kind === "archetype" && review.archetype.name, "critic");
+
+  const build = coordinator.dispatch("implement a login form in the app");
+  assert.equal(build.kind === "archetype" && build.archetype.name, "coder");
+
+  const novel = coordinator.dispatch("translate this telugu paragraph into english");
+  assert.equal(novel.kind, "synthesized"); // matches no preset keyword → bespoke archetype
+
+  const vague = coordinator.dispatch("do it");
+  assert.equal(vague.kind, "clarify"); // too brief → one clarifying question, not a guess
+  assert.match(vague.kind === "clarify" ? vague.question : "", /too brief/);
+});
+
+test("dispatch: a factory-approved agent named in the task is routed to, ahead of presets (Step 5 loop)", async () => {
+  const parent = registerBuiltins(new ToolRegistry());
+  const factory = new AgentFactory(parent, new SkillIndex(), { ask: async () => true });
+  await factory.approveAndRegister(factory.propose("telugu-translator", "translate telugu text to english"));
+
+  const coordinator = new Coordinator({
+    router: new Router([new EchoProvider()]),
+    model: "mock",
+    parentPolicy: makePolicy("full", mkdtempSync(join(tmpdir(), "vishu-fac-"))),
+    parentRegistry: parent,
+    repoDir: mkdtempSync(join(tmpdir(), "vishu-fac-")),
+    factory,
+  });
+
+  const named = coordinator.dispatch("please run telugu-translator on this paragraph");
+  assert.equal(named.kind, "archetype");
+  assert.equal(named.kind === "archetype" && named.archetype.name, "telugu-translator", "approved agent wins over any preset");
+
+  // Routing recall: a task that DESCRIBES the agent's job (without naming it) reaches it too.
+  const described = coordinator.dispatch("translate this telugu paragraph into english");
+  assert.equal(described.kind === "archetype" && described.archetype.name, "telugu-translator", "describe-not-name still routes to the bespoke agent");
+
+  // A task with no overlap is NOT hijacked — it synthesizes a fresh agent.
+  const novel = coordinator.dispatch("compose a haiku about the ocean at dawn");
+  assert.equal(novel.kind, "synthesized");
+
+  // dispatchAndRun on a too-vague task returns the clarifying question without executing anything.
+  assert.match(await coordinator.dispatchAndRun("do it"), /too brief/);
 });
 
 test("orchestrated request fans out, prunes a failed branch, returns one result", async () => {
@@ -149,6 +228,32 @@ test("parallel mode: branches race, the winner is auto-merged and failed-branch 
   assert.match(result.final, /Cross-branch learnings/); // …and backpropagated into the result
 });
 
+test("subagent retries once after a mid-run crash, then succeeds", async () => {
+  let calls = 0;
+  const crashOnce: Provider = {
+    name: "crash-once",
+    async chat(): Promise<ChatResponse> {
+      if (calls++ === 0) throw new Error("boom"); // first attempt crashes mid-run
+      return { content: "recovered", finish: "stop" };
+    },
+    chatStream(req) {
+      return this.chat(req);
+    },
+  };
+  const outcome = await runSubagent({
+    archetype: ARCHETYPES.coder!,
+    task: "do the thing",
+    parentContext: "ctx",
+    parentPolicy: makePolicy("full", mkdtempSync(join(tmpdir(), "vishu-retry-"))),
+    parentRegistry: registerBuiltins(new ToolRegistry()),
+    router: new Router([crashOnce]),
+    model: "mock",
+    repoDir: mkdtempSync(join(tmpdir(), "vishu-retry-")),
+  });
+  assert.equal(outcome.final, "recovered");
+  assert.equal(calls, 2); // crashed once, retried once — exactly one retry
+});
+
 test("harvest: the winning branch's work is merged back into the action repo", async () => {
   const repoDir = mkdtempSync(join(tmpdir(), "vishu-harvest-"));
   const outcome = await runSubagent({
@@ -169,4 +274,56 @@ test("harvest: the winning branch's work is merged back into the action repo", a
   });
   assert.equal(outcome.merged, true);
   assert.equal(readFileSync(join(repoDir, "artifact.txt"), "utf8"), "winner"); // merged into the repo
+});
+
+test("harvest: a run that changes nothing is not merged — no empty harvest commit (UPGRADES §7)", async () => {
+  const repoDir = mkdtempSync(join(tmpdir(), "vishu-harvest-empty-"));
+  const outcome = await runSubagent({
+    archetype: ARCHETYPES.researcher!, // read-only archetype — produces no diff
+    task: "look but don't touch",
+    parentContext: "ctx",
+    parentPolicy: makePolicy("full", repoDir),
+    parentRegistry: registerBuiltins(new ToolRegistry()),
+    router: new Router([new EchoProvider()]),
+    model: "mock",
+    repoDir,
+    harvest: true,
+    validate: async () => ({ ok: true, output: "reviewed" }), // passes, writes nothing
+  });
+  assert.equal(outcome.merged, false); // clean worktree → nothing harvested
+});
+
+test("subagent honours an `ask`: a send-class tool runs only when approval says yes (UPGRADES §4)", async () => {
+  let ran = false;
+  const sender: Tool = {
+    name: "fake_send",
+    description: "test send",
+    parameters: { type: "object", properties: {} },
+    meta: { action: "send" }, // NEVER_WITHOUT_ASKING → always routes through the gate
+    async run() { ran = true; return "SENT"; },
+  };
+  const archetype = { name: "sender", system: "you send", tools: ["fake_send"] };
+  const run = (ask?: (r: unknown) => Promise<boolean>) => {
+    ran = false;
+    const parent = new ToolRegistry();
+    parent.register(sender);
+    // turn 1: call fake_send; turn 2: finish.
+    const router = new Router([new ScriptedProvider([
+      { content: "", toolCalls: [{ id: "1", name: "fake_send", arguments: {} }], finish: "tool_calls" },
+      { content: "done", finish: "stop" },
+    ])]);
+    return runSubagent({
+      archetype, task: "send it", parentContext: "ctx",
+      parentPolicy: makePolicy("full", mkdtempSync(join(tmpdir(), "vishu-ask-"))),
+      parentRegistry: parent, router, model: "mock",
+      repoDir: mkdtempSync(join(tmpdir(), "vishu-ask-")),
+      ask: ask as never,
+    });
+  };
+
+  await run(async () => true);
+  assert.equal(ran, true, "approved send should execute");
+
+  await run(); // no ask → fail-closed deny
+  assert.equal(ran, false, "unapproved send must be denied");
 });

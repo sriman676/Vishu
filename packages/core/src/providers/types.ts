@@ -28,6 +28,9 @@ export interface ChatRequest {
   maxTokens?: number;
   /** Where this call comes from (agent/appbuilder/orchestration/…) — drives the token report. */
   category?: string;
+  /** Extended-thinking budget (Anthropic). Set ONLY for orchestrator/decision calls; providers that
+   * don't support it ignore it. maxTokens is floored above the budget by the provider. */
+  thinking?: { budgetTokens: number };
 }
 
 export interface ChatResponse {

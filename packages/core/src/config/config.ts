@@ -63,7 +63,25 @@ const PRESETS: Record<string, { type: ProviderType; baseUrl: string; model: stri
   xai: { type: "openai", baseUrl: "https://api.x.ai/v1", model: "grok-2-latest" },
   perplexity: { type: "openai", baseUrl: "https://api.perplexity.ai", model: "sonar" },
   cohere: { type: "openai", baseUrl: "https://api.cohere.ai/compatibility/v1", model: "command-r" },
+  // Local Qwen3 on Intel Arc via IPEX-LLM's Ollama portable (OpenAI-compatible at :11434/v1). Offline,
+  // credential-free — any VISHU_API_KEY value works (Ollama ignores it). See scripts/setup-intel-llm.ps1.
+  intel: { type: "openai", baseUrl: "http://127.0.0.1:11434/v1", model: "qwen3:8b" },
 };
+
+/** Largest generally-available NVIDIA NIM model — the default "expert"/builder brain (decision
+ * 2026-07-10: Anthropic keys are dead, so expert work runs on the biggest NIM model). Override with
+ * JARVIS_BUILDER_MODEL for a coder-tuned or smaller NIM model. */
+const NIM_LARGE_MODEL = "meta/llama-3.1-405b-instruct";
+
+/** Which model the "builder"/expert role runs. JARVIS_BUILDER_MODEL always wins; else, when the default
+ * provider is NVIDIA NIM, the largest NIM model; else the provider's own model (nothing to upgrade to).
+ * ponytail: a model-string resolver, not a whole extra provider — the builder Router is still
+ * roles.for("builder"); this only names the model that Router is asked for. */
+export function resolveBuilderModel(env: NodeJS.ProcessEnv, provider: ProviderConfig): string {
+  if (env.JARVIS_BUILDER_MODEL) return env.JARVIS_BUILDER_MODEL;
+  const isNim = /nvidia|nim/i.test(provider.baseUrl);
+  return isNim ? NIM_LARGE_MODEL : provider.model;
+}
 
 /** Friendly preset names (gemini, nvidia, xai, …) — surfaced to the UI's provider/model switcher. */
 export function providerPresets(): { name: string; model: string }[] {

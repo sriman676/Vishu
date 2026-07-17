@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { registerAgent, registerAgentQueue } from "../agent/rpc.js";
 import { AgentQueue } from "../agent/queue.js";
@@ -8,18 +9,25 @@ import { buildApp } from "../appbuilder/build.js";
 import { formatFindings } from "../appbuilder/security.js";
 import { type AppSpec, type InterviewTurn, interviewStep, persistSpec, specToMarkdown } from "../appbuilder/spec.js";
 import { AgentService } from "../agent/service.js";
-import { loadConfig, providerPresets } from "../config/config.js";
+import { loadConfig, providerPresets, resolveBuilderModel } from "../config/config.js";
 import { ok as okRpc } from "../transport/rpc.js";
 import { registerAutomation, registerAutofix } from "../automation/rpc.js";
+import { registerScheduleTools } from "../automation/schedule.js";
 import { SchedulerGate } from "../automation/gate.js";
 import { attachNotificationSink } from "../automation/notify.js";
 import { startResourceGuard } from "../automation/sensor.js";
-import { TriggerManager } from "../automation/triggers.js";
+import { TriggerManager, TriggerStore } from "../automation/triggers.js";
+import { RunStore } from "../automation/runs.js";
 import { WorkflowStore } from "../automation/workflows.js";
 import { registerConnectors } from "../connectors/rpc.js";
 import { LocalConnector } from "../connectors/local.js";
 import { McpClient, type McpSampler, registerMcpTools } from "../connectors/mcp.js";
+import { DomainManager, loadDomains } from "../connectors/domains.js";
 import { WebhookConnector } from "../connectors/webhook.js";
+import { StubMailConnector } from "../connectors/daily.js";
+import { GmailConnector } from "../connectors/gmail.js";
+import { startMailPoll } from "../connectors/mailpoll.js";
+import { tokenChannels } from "../connectors/channels.js";
 import type { Connector } from "../connectors/types.js";
 import { registerMemory } from "../memory/rpc.js";
 import { MODULES } from "../modules/all.js";
@@ -31,6 +39,8 @@ import { DigitalTwin } from "../personalization/twin.js";
 import { IdentityProfile } from "../personalization/profile.js";
 import { registerEvolve, registerProfile, registerTwin } from "../personalization/rpc.js";
 import { registerOrchestrationTools } from "../orchestration/tools.js";
+import { AgentFactory } from "../orchestration/factory.js";
+import { ModeManager, registerModeRpc, registerModeTools } from "../orchestration/modes.js";
 import { buildRoles } from "../orchestration/roles.js";
 import { registerReasoning } from "../reasoning/rpc.js";
 import { registerReasoningTools } from "../reasoning/tools.js";
@@ -45,9 +55,21 @@ import { BUILTIN_SUITE } from "../eval/suite.js";
 import { loadSweBenchLite, runSweBench } from "../eval/swebench.js";
 import { buildPoolRouter, buildRouter } from "../providers/factory.js";
 import { RunLog } from "../reliability/runlog.js";
+import { makeAsk, terminalPrompt } from "../reliability/ask.js";
+import { AuditLog } from "../security/audit.js";
+import { registerAudit } from "../security/rpc.js";
+import { assertBoot, selfCheck } from "../reliability/selfcheck.js";
+import { DecisionStore, registerDecisions } from "../reliability/autonomy.js";
+import { ApprovalGate } from "../reliability/approvals.js";
+import { buildVishuMcpServer, serveMcpHttp, serveMcpStdio } from "../connectors/mcp-server.js";
+import type { ToolContext } from "../tools/types.js";
+import { isPaused, pause, pauseFile, resume } from "../automation/pause.js";
 import { makePolicy } from "../security/policy.js";
 import { SkillIndex } from "../skills/index.js";
 import { registerSkillTools } from "../skills/tools.js";
+import { registerAcquireTools } from "../skills/acquire.js";
+import { registerInstallTools } from "../skills/install.js";
+import { analyzeRepo, applyTrust, isTrustedRepo, llmAdvisory, renderAnalysis, setRepoTrust, trustedRepoPaths } from "../skills/repoanalyzer.js";
 import { registerBuiltins } from "../tools/builtins.js";
 import { runToolLoop } from "../tools/loop.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -57,6 +79,8 @@ import { registerUsage } from "../usage/rpc.js";
 import { BudgetWatcher } from "../usage/budget.js";
 import { UsageLog, readUsage } from "../usage/log.js";
 import { buildReport, renderReport } from "../usage/report.js";
+import { ledgerReport, readLedger, renderLedger } from "../usage/ledger.js";
+import { TraceLog, Tracer, readSpans } from "../reliability/trace.js";
 import { buildRegistry } from "../transport/all.js";
 import { bus } from "../transport/events.js";
 import { rpcCall, readToken } from "../transport/client.js";
@@ -128,6 +152,10 @@ async function serve(): Promise<number> {
   const skills = new SkillIndex();
   skills.loadDir(config.paths.skillsDir);
   registerSkillTools(tools, skills);
+  // Capability audit (CF3, safe half): infer a task's needed skills, report present-vs-missing + an
+  // acquisition plan. Read-only — discovery/security-vet/gated-install are the next phase. toolText is a
+  // live getter so the audit sees every tool registered below.
+  registerAcquireTools(tools, skills, () => tools.schemas().map((s) => `${s.name}: ${s.description}`).join("  "));
   const usage = usageLog(config);
   // Deterministic record/replay: VISHU_REPLAY=record|replay funnels through the Router chokepoint.
   const replayMode = (process.env.VISHU_REPLAY as ReplayMode) || "off";
@@ -136,20 +164,27 @@ async function serve(): Promise<number> {
   // Multi-provider pool: when named providers are configured, span them all in one Router (each bound to
   // its own model). VISHU_KEY_MODE decides parallel (balance) vs one-after-other (failover).
   const pooled = Object.keys(config.providers).length > 0;
-  const router = pooled ? buildPoolRouter(config.providers, usage, cassette) : buildRouter(config.provider, usage, cassette);
+  const tracer = new Tracer(new TraceLog(join(config.paths.workspaceDir, "spans.jsonl"))); // PAUL span tracing → ledger latency
+  const router = pooled ? buildPoolRouter(config.providers, usage, cassette, tracer) : buildRouter(config.provider, usage, cassette, tracer);
   if (pooled) process.stdout.write(`[pool] ${Object.keys(config.providers).join(" + ")} (mode: ${process.env.VISHU_KEY_MODE || "failover"})\n`);
-  const roles = buildRoles(router, config.providers, config.roles, usage);
-  if (roles.roles().length) process.stdout.write(`[roles] ${roles.roles().map((r) => `${r}→${config.roles[r]}`).join(", ")}\n`);
+  const roles = buildRoles(router, config.provider.model, config.providers, config.roles, usage);
+  // Expert/"builder" work runs on the largest NIM model (decision 2026-07-10). A dedicated builder
+  // provider (config.roles.builder) keeps its own model unless JARVIS_BUILDER_MODEL overrides.
+  const builderModel = resolveBuilderModel(process.env, config.provider);
+  if (process.env.JARVIS_BUILDER_MODEL || !config.roles.builder) roles.assign("builder", roles.for("builder"), builderModel);
+  if (roles.roles().length) process.stdout.write(`[roles] ${roles.roles().map((r) => `${r}→${config.roles[r] ?? "default"}@${roles.modelFor(r)}`).join(", ")}\n`);
+  // CF3b paths 2+3: gated npm/pip + GitHub-repo acquisition (change_setting). The optional advisor is an
+  // advisory-only LLM pass on a clean clone (builder model) — never changes the deterministic block verdict.
+  registerInstallTools(tools, (dir) => llmAdvisory(router, builderModel, dir));
   const memory = new MemoryStore(
     config.paths.vaultDir,
     config.paths.memoryDbFile,
     join(config.paths.workspaceDir, "memory-events.log"),
     router.canEmbed() ? (texts) => router.embed(texts) : undefined,
   );
-  registerMemoryTools(tools, memory);
   registerMemory(registry, memory);
   registerUsage(registry, config.paths.workspaceDir);
-  registerOrchestrationTools(tools, { roles, model: config.provider.model });
+  registerAudit(registry); // vishu.audit_verify — tamper-check the hash-chained decision log (default file)
   registerReasoningTools(tools, { router, model: config.provider.model });
   registerReasoning(registry, { router, model: config.provider.model });
   registerReplay(registry, cassette);
@@ -167,6 +202,41 @@ async function serve(): Promise<number> {
   const sessions = new SessionStore();
   const twin = new DigitalTwin(join(config.paths.workspaceDir, "twin.json"));
   const profile = new IdentityProfile(join(config.paths.workspaceDir, "profile.json"));
+  // F0 approval channel: one terminal y/N prompt per gated action, shared across every turn so prompts
+  // serialize on one stdin. No TTY (detached) → denies, keeping the fail-closed guarantee for send/spend/delete.
+  const ask = makeAsk(terminalPrompt);
+  // Durable append-only decision log — every gate verdict lands here across runs (UPGRADES §2).
+  const audit = new AuditLog();
+  // ask_once remembers persist here so a remembered "yes" survives restart (UPGRADES §1).
+  const rememberFile = join(config.paths.workspaceDir, "approvals.json");
+  // Daily send-cap counter (PLAN F7 ≤30/day; VISHU_SEND_CAP overrides), persisted across restarts.
+  const sendCapFile = join(config.paths.workspaceDir, "send-count.json");
+  const sendCap = Number(process.env.VISHU_SEND_CAP) || 30;
+  // Learned autonomy (Alfred ask→confirm→act): log every gate verdict; after N clean approvals of a
+  // reversible signature, SUGGEST an auto-approve grant on the bus. Grants (RPC-only, floor-excluded)
+  // are consulted before asking. VISHU_AUTONOMY_N overrides the default 3.
+  const decisions = new DecisionStore(
+    join(config.paths.workspaceDir, "decisions.jsonl"),
+    join(config.paths.workspaceDir, "grants.json"),
+    Number(process.env.VISHU_AUTONOMY_N) || 3,
+  );
+  const suggest = (actionClass: string, signature: string) =>
+    bus.publish({ domain: "autonomy", type: "suggest_grant", payload: { actionClass, signature } });
+  // Agent factory + orchestration tools: registered here (not earlier) so the factory shares the same
+  // `ask`/`audit` gate. `create_agent` gates registration; approved agents persist in agents.json and
+  // become routable by the `dispatch` tool (Phase 1 Step 5 loop closure).
+  const factory = new AgentFactory(tools, skills, { ask, audit, storePath: join(config.paths.workspaceDir, "agents.json") });
+  registerOrchestrationTools(tools, { roles, model: config.provider.model, factory });
+  // F12 personas/modes: one ModeManager sharing the runtime ask/audit gate. mode_propose gates NEW modes
+  // (change_setting); approved ones persist to modes.json + hot-load. The active mode's prompt layers
+  // into the agent's system prompt (below), so a switch actually changes behaviour.
+  const modes = new ModeManager({ ask, audit, storePath: join(config.paths.workspaceDir, "modes.json") });
+  registerModeTools(tools, modes);
+  registerModeRpc(registry, modes); // web UI persona switcher + per-mode voiceId (§8)
+  // §8: scope agent memory write+recall to the active mode's folder (registered here — after `modes` exists).
+  registerMemoryTools(tools, memory, () => modes.active().memoryFolder);
+  // Boot invariants (UPGRADES §5): never come up ungated, unlogged, or unable to pause. Fail loud.
+  assertBoot(selfCheck({ gateWired: Boolean(ask) }), (s) => process.stdout.write(s));
   const agentService = new AgentService({
     router,
     tools,
@@ -176,8 +246,18 @@ async function serve(): Promise<number> {
     runLog: new RunLog(),
     twin,
     profile,
+    mode: modes,
+    ask,
+    audit,
+    rememberFile,
+    sendCapFile,
+    sendCap,
+    decisions,
+    suggest,
+    tracer, // span-trace the main interactive turn's tool loop, not just queued tasks
   }, sessions);
   registerAgent(registry, agentService);
+  registerDecisions(registry, decisions); // vishu.decisions_list / autonomy_grant / autonomy_revoke
 
   // Agent-level task queue: fire-and-poll multitasking, N turns at once (VISHU_AGENT_CONCURRENCY, default 2).
   // Each task gets its own Terminal so concurrent shells don't interleave; the session store is shared.
@@ -186,7 +266,7 @@ async function serve(): Promise<number> {
     const terminal = new Terminal(config.paths.actionDir);
     try {
       const svc = new AgentService(
-        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile },
+        { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile, mode: modes, ask, audit, rememberFile, sendCapFile, sendCap, decisions, suggest, tracer },
         sessions,
       );
       return await svc.startTurn(sid, msg);
@@ -206,8 +286,13 @@ async function serve(): Promise<number> {
     autonomy: "automatic",
     run: async (step) => (await agentService.startTurn(undefined, step)).final,
     runLog: new RunLog(),
+    // Durability: triggers persist + reload on restart; interrupted workflow runs resume per-step.
+    triggerStore: new TriggerStore(join(config.paths.workspaceDir, "triggers.json")),
+    runStore: new RunStore(join(config.paths.workspaceDir, "runs")),
   });
   registerAutomation(registry, workflows, triggers);
+  // Agent-facing NL scheduling (proposal #1): schedule_task / list_tasks / cancel_task over the trigger infra.
+  registerScheduleTools(tools, { store: workflows, manager: triggers });
   registerAutofix(registry, {
     actionDir: config.paths.actionDir,
     autonomy: "automatic",
@@ -235,7 +320,18 @@ async function serve(): Promise<number> {
   // Phase 10: connectors — inbound triage + outbound send RPC, MCP servers, realtime SSE stream.
   const connectors = new Map<string, Connector>([["local", new LocalConnector()]]);
   for (const [channel, url] of Object.entries(parseWebhooks())) connectors.set(channel, new WebhookConnector(channel, url));
-  registerConnectors(registry, { router, model: config.provider.model, memory, bus, runLog: new RunLog() }, connectors);
+  // §11a email channel: real Gmail (app-password SMTP) when GMAIL_USER + GMAIL_APP_PASSWORD are set, else
+  // the stub that throws loudly. Send stays behind the F0 send-class gate at the RPC layer.
+  if (!connectors.has("email")) {
+    const gmail = new GmailConnector();
+    connectors.set("email", gmail.configured ? gmail : new StubMailConnector());
+    if (gmail.configured) process.stdout.write("[email] Gmail SMTP connector active (app password)\n");
+  }
+  for (const c of tokenChannels()) connectors.set(c.channel, c); // §11h(ii): telegram/slack/sms when tokens set
+  registerConnectors(registry, { router, model: config.provider.model, memory, bus, runLog: new RunLog(), voice: profile.render() }, connectors);
+  // §11a inbound: poll Gmail (POP3) → daily-driver, when GMAIL_USER + GMAIL_APP_PASSWORD are set (else no-op).
+  startMailPoll({ router, model: config.provider.model, memory, bus, runLog: new RunLog(), voice: profile.render() }, { seenFile: join(config.paths.workspaceDir, "mail-seen.txt") });
+  if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) process.stdout.write(`[email] POP3 inbound poll every ${Number(process.env.VISHU_MAIL_POLL_MS) || 120000}ms\n`);
   // MCP sampling: a server's sampling/createMessage runs through our Router and returns an MCP result.
   const sampler: McpSampler = async (params) => {
     const p = (params ?? {}) as { messages?: { role: string; content?: { text?: string } }[] };
@@ -246,12 +342,21 @@ async function serve(): Promise<number> {
   };
   await connectMcpServers(tools, bus, sampler);
 
+  // Phase 1 Step 3: attach external domain services (JobAutomation, …) from jarvis.domains.json as
+  // namespaced `<id>__*` tool sets, each domain's declared action classes reaching the F0 gate.
+  const domainsFile = process.env.VISHU_DOMAINS_FILE || join(process.cwd(), "jarvis.domains.json");
+  const domainTools = await new DomainManager(loadDomains(domainsFile), tools, { bus, sampler }).start();
+  if (domainTools.length) process.stdout.write(`[domains] ${domainTools.length} tool(s): ${domainTools.join(", ")}\n`);
+
   // Phase 12: optional modules — off by default, enabled by VISHU_MODULES; core is unaffected when off.
   const modulesOn = await loadModules(MODULES, { tools, rpc: registry, bus, workspaceDir: config.paths.workspaceDir });
   if (modulesOn.length) process.stdout.write(`[modules] enabled: ${modulesOn.join(", ")}\n`);
 
   const corsOrigins = process.env.VISHU_CORS_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean);
-  const running = await startServer(registry, host(), config.port, bus, corsOrigins);
+  // 11g: also serve the built web UI (packages/frontend Vite output) over the same port so it opens in a
+  // plain browser, not only the Tauri shell. VISHU_WEBROOT overrides; missing dist just 404s (core fine).
+  const webRoot = process.env.VISHU_WEBROOT ?? fileURLToPath(new URL("../../../frontend/dist", import.meta.url));
+  const running = await startServer(registry, host(), config.port, bus, corsOrigins, webRoot);
   const base = `http://${host()}:${running.port}`;
   process.stdout.write(`[serve] vishu ${version()} on ${base}\n`);
   process.stdout.write(`[serve] token: ${join(config.paths.workspaceDir, "core.token")}\n`);
@@ -259,6 +364,14 @@ async function serve(): Promise<number> {
   const stop = () => void running.close().then(() => process.exit(0));
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
+  // UPGRADES §5: an out-of-band instant pause — hit it mid-runaway without the agent's cooperation.
+  // Ctrl+Break on Windows (SIGINT/Ctrl+C still stops); SIGUSR2 on POSIX (`kill -USR2 <pid>`).
+  const pauseSignal: NodeJS.Signals = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
+  process.on(pauseSignal, () => {
+    pause(`${pauseSignal} kill switch`);
+    process.stdout.write(`\n[pause] engaged via ${pauseSignal} — every gated action now denied; \`vishu resume\` to clear\n`);
+  });
+  process.stdout.write(`[serve] instant pause: ${pauseSignal === "SIGBREAK" ? "Ctrl+Break" : "kill -USR2 " + process.pid}\n`);
   return new Promise<number>(() => {}); // run until signalled
 }
 
@@ -276,14 +389,17 @@ async function chat(text: string): Promise<number> {
 async function agent(text: string): Promise<number> {
   const config = loadConfig();
   mkdirSync(config.paths.actionDir, { recursive: true });
+  mkdirSync(config.paths.workspaceDir, { recursive: true });
   const registry = registerBuiltins(new ToolRegistry());
+  const tracer = new Tracer(new TraceLog(join(config.paths.workspaceDir, "spans.jsonl"))); // trace the one-shot CLI too
   const result = await runToolLoop(
     {
-      router: buildRouter(config.provider, usageLog(config)),
+      router: buildRouter(config.provider, usageLog(config), undefined, tracer),
       registry,
       policy: makePolicy("full", config.paths.actionDir),
       terminal: new Terminal(config.paths.actionDir),
       model: config.provider.model,
+      tracer,
     },
     [
       { role: "system", content: "You are Vishu, a coding agent. Use the tools to build, run, and verify work strictly inside the action directory." },
@@ -299,7 +415,7 @@ async function build(goal: string): Promise<number> {
   const config = loadConfig();
   mkdirSync(config.paths.actionDir, { recursive: true });
   const router = buildRouter(config.provider, usageLog(config));
-  const model = config.provider.model;
+  const model = resolveBuilderModel(process.env, config.provider); // expert build runs on the builder model
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     const turns: InterviewTurn[] = [];
@@ -366,6 +482,17 @@ function report(daysArg?: string): number {
   if (!Number.isFinite(days) || days <= 0) return usageErr("vishu report [days]");
   const records = readUsage(join(config.paths.workspaceDir, "usage.jsonl"));
   process.stdout.write(`${renderReport(buildReport(records, days * 86_400_000), days)}\n`);
+  return 0;
+}
+
+/** Unified ledger straight from the local logs (no running core): per-turn token+decision cost. */
+function ledger(daysArg?: string): number {
+  const config = loadConfig();
+  const days = daysArg ? Number(daysArg) : 7;
+  if (!Number.isFinite(days) || days <= 0) return usageErr("vishu ledger [days]");
+  const events = readLedger(join(config.paths.workspaceDir, "usage.jsonl"), join(config.paths.workspaceDir, "decisions.jsonl"));
+  const spans = readSpans(join(config.paths.workspaceDir, "spans.jsonl"));
+  process.stdout.write(`${renderLedger(ledgerReport(events, days * 86_400_000, Date.now(), spans), days)}\n`);
   return 0;
 }
 
@@ -448,6 +575,36 @@ async function rpc(method: string, paramsJson?: string): Promise<number> {
   return res.error || (res.result && res.result.ok === false) ? 1 : 0;
 }
 
+/** Expose Vishu's tools to any MCP client. Default stdio (client spawns us); `--http [port]` listens on
+ * 127.0.0.1 (bearer token required iff VISHU_MCP_TOKEN is set — "token optional"). Every external call
+ * goes through a fail-closed ApprovalGate, so send/spend/delete/change_setting can never run unattended. */
+async function mcpServe(argv: string[]): Promise<number> {
+  const config = loadConfig();
+  // No initToken here on purpose: the MCP server needs no Vishu auth token. stdio has none; HTTP is
+  // open on localhost unless VISHU_MCP_TOKEN is set. Token-free by default.
+  mkdirSync(config.paths.actionDir, { recursive: true });
+  const tools = registerBuiltins(new ToolRegistry());
+  const skills = new SkillIndex();
+  skills.loadDir(config.paths.skillsDir);
+  registerSkillTools(tools, skills);
+  const memory = new MemoryStore(config.paths.vaultDir, config.paths.memoryDbFile, join(config.paths.workspaceDir, "memory-events.log"));
+  registerMemoryTools(tools, memory, () => ""); // lexical recall (no embedder wired here) over the whole vault
+  const gate = new ApprovalGate("ask_every_time", async () => false, { actionOf: (n) => tools.getAction(n) });
+  const ctx: ToolContext = { policy: makePolicy("full", config.paths.actionDir), terminal: new Terminal(config.paths.actionDir) };
+  const server = buildVishuMcpServer(tools, gate, ctx);
+
+  const httpIdx = argv.indexOf("--http");
+  if (httpIdx >= 0) {
+    const port = Number(argv[httpIdx + 1]) || 8848;
+    const token = process.env.VISHU_MCP_TOKEN || undefined;
+    await serveMcpHttp(server, { port, token });
+    process.stdout.write(`[mcp] HTTP on http://127.0.0.1:${port}${token ? " (bearer token required)" : " (open — localhost only)"}\n`);
+    return 0; // the listening socket keeps the process alive until killed
+  }
+  await serveMcpStdio(server); // stdin handle keeps us alive; the client owns the lifecycle
+  return 0;
+}
+
 async function main(argv: string[]): Promise<number> {
   // Load a .env from the working dir if present (Node 24 native, no dep). Absent → use the real env.
   try {
@@ -466,6 +623,18 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   if (cmd === "serve") return serve();
+  if (cmd === "jarvis") return serve(); // the full PA runtime: serve + domain services from jarvis.domains.json
+  if (cmd === "pause") {
+    // Flag-file kill switch — works out-of-band whether or not a core is running (survives restart).
+    pause(argv.slice(1).join(" "));
+    process.stdout.write(`[pause] engaged → ${pauseFile()}\n`);
+    return 0;
+  }
+  if (cmd === "resume") {
+    resume();
+    process.stdout.write(`[resume] cleared${isPaused() ? " (still paused: another PAUSED file?)" : ""}\n`);
+    return 0;
+  }
   if (cmd === "chat") {
     const text = argv.slice(1).join(" ");
     if (!text) return usageErr("vishu chat <message>");
@@ -481,7 +650,37 @@ async function main(argv: string[]): Promise<number> {
     if (!text) return usageErr("vishu build <what to build>");
     return build(text);
   }
+  if (cmd === "vet") {
+    // CF3c deterministic security gate on a repo dir (cross-cutting "vetRepo before it runs").
+    // Non-zero exit when blocked so it's scriptable; still requires human approval to install/wire.
+    const dir = argv[1];
+    if (!dir) return usageErr("vishu vet <repo-dir>");
+    const raw = analyzeRepo(dir);
+    // Trusted repos (the user's own audited code) surface findings but don't hard-block (UPGRADES §2.3).
+    const trusted = isTrustedRepo(dir, trustedRepoPaths(loadConfig().paths.workspaceDir));
+    const res = trusted ? applyTrust(raw) : raw;
+    if (trusted) process.stdout.write("[trusted repo — block-class findings downgraded to warn]\n");
+    process.stdout.write(`${renderAnalysis(dir, res)}\n`);
+    return res.blocked ? 1 : 0;
+  }
+  if (cmd === "trust") {
+    // Manage the trusted-repo allowlist (outside any scanned repo). `--list` shows it; `--remove` untrusts.
+    const workspaceDir = loadConfig().paths.workspaceDir;
+    if (argv[1] === "--list" || !argv[1]) {
+      const trusted = trustedRepoPaths(workspaceDir);
+      process.stdout.write(trusted.length ? `${trusted.join("\n")}\n` : "no trusted repos\n");
+      return 0;
+    }
+    const remove = argv.includes("--remove") || argv.includes("--untrust");
+    const dir = argv.find((a, i) => i > 0 && !a.startsWith("--"));
+    if (!dir) return usageErr("vishu trust <repo-dir> [--remove] | vishu trust --list");
+    const next = setRepoTrust(workspaceDir, dir, !remove);
+    process.stdout.write(`${remove ? "untrusted" : "trusted"} ${dir}\n${next.length} trusted repo(s)\n`);
+    return 0;
+  }
+  if (cmd === "mcp-serve") return mcpServe(argv.slice(1));
   if (cmd === "report") return report(argv[1]);
+  if (cmd === "ledger") return ledger(argv[1]);
   if (cmd === "eval") return argv[1] === "swebench" ? sweBenchCmd(argv.slice(2)) : evalCmd(argv[1]);
   if (cmd === "rpc") {
     const method = argv[1];
@@ -497,13 +696,20 @@ async function main(argv: string[]): Promise<number> {
       "  vishu --version              print version",
       "  vishu config                 print resolved config + paths",
       "  vishu serve                  start the JSON-RPC core (loopback)",
+      "  vishu jarvis                 start the full PA runtime (serve + domain services)",
+      "  vishu pause [reason]         engage the global kill switch (denies all gated actions)",
+      "  vishu resume                 clear the global pause",
       "  vishu chat <message>         one-shot chat via the configured provider",
       "  vishu agent <task>           run the tool loop (build/run inside action_dir)",
       "  vishu build <what>           guided secure app builder: spec interview → build → pentest",
+      "  vishu vet <repo-dir>         static security gate on a repo (PASS/WARN/BLOCKED; nonzero if blocked)",
+      "  vishu trust <dir> [--remove] trust/untrust a repo (own audited code): findings warn, don't block",
       "  vishu report [days]          weekly token report: where tokens go + where they're wasted",
+      "  vishu ledger [days]          unified token+decision ledger with per-turn cost attribution",
       "  vishu eval [runner]          run the eval suite (baseline|effort|moa) + track quality over time",
       "  vishu eval swebench [--limit N] [--file f] [--out p]   SWE-bench Lite: write predictions.jsonl",
       "  vishu rpc <method> [json]    call a method on a running core",
+      "  vishu mcp-serve [--http [port]]  expose Vishu's tools as an MCP server (stdio, or HTTP :8848)",
       "",
     ].join("\n"),
   );

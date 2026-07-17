@@ -54,3 +54,52 @@ export function decideCommand(policy: SecurityPolicy, command: string): CommandD
   if (injection === "block") return { allowed: false, klass, injection, reason: "prompt-injection blocked" };
   return { allowed: true, klass, injection };
 }
+
+// ── Egress allowlist (Phase 1.4 no-exfiltration) ──────────────────────────────
+// Hosts Vishu is expected to reach silently: LLM providers + local endpoints.
+// A PA MUST make intentional outbound calls (research fetch, apply), so a
+// non-allowlisted host is WARNED + logged, not blocked — the enforceable
+// guarantee is "nothing goes out unlogged", not "nothing goes out".
+const DEFAULT_EGRESS_HOSTS = [
+  "localhost", "127.0.0.1",
+  "api.anthropic.com", "api.openai.com", "integrate.api.nvidia.com",
+  "api.groq.com", "api.mistral.ai", "api.together.xyz", "api.fireworks.ai",
+  "api.deepseek.com", "api.perplexity.ai", "api.cohere.ai", "api.x.ai",
+  "openrouter.ai", "generativelanguage.googleapis.com",
+];
+
+export interface EgressDecision {
+  host: string;
+  allowlisted: boolean;
+  reason?: string;
+}
+
+// Hosts contributed by attached domains (UPGRADES §2d) — each plugged-in domain declares its own
+// intended egress (JobAutomation job boards, research APIs, …) in jarvis.domains.json, registered here.
+const registeredEgressHosts = new Set<string>();
+
+/** Fold a domain's declared egress hosts into the allowlist (called by DomainManager at start). */
+export function registerEgressHosts(hosts: readonly string[]): void {
+  for (const h of hosts) {
+    const host = h.trim().toLowerCase();
+    if (host) registeredEgressHosts.add(host);
+  }
+}
+
+/** The active egress allowlist: defaults ∪ VISHU_EGRESS_ALLOWLIST ∪ per-domain registered hosts. */
+export function egressAllowlist(): Set<string> {
+  const extra = (process.env.VISHU_EGRESS_ALLOWLIST ?? "")
+    .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  return new Set([...DEFAULT_EGRESS_HOSTS, ...extra, ...registeredEgressHosts]);
+}
+
+/** Classify an outbound URL against the egress allowlist. Malformed URL → not allowlisted. */
+export function decideEgress(url: string, allow: Set<string> = egressAllowlist()): EgressDecision {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return { host: "", allowlisted: false, reason: "malformed URL" };
+  }
+  return { host, allowlisted: allow.has(host) };
+}

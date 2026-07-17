@@ -46,6 +46,39 @@ test("a frontend-shaped client drives a full agent turn over RPC", async () => {
   }
 });
 
+test("F0 gate: a send-class tool is DENIED unattended by default (no approval UI wired)", async () => {
+  const actionDir = mkdtempSync(join(tmpdir(), "vishu-act-"));
+  let sent = false;
+  const tools = registerBuiltins(new ToolRegistry());
+  tools.register({
+    name: "outreach_send",
+    description: "send an email",
+    meta: { action: "send" },
+    parameters: { type: "object", properties: {} },
+    async run() {
+      sent = true; // must never be reached without an explicit human yes
+      return "sent";
+    },
+  });
+  const service = new AgentService({
+    router: new Router([
+      new ScriptedProvider([
+        { content: "", toolCalls: [{ id: "t1", name: "outreach_send", arguments: {} }], finish: "tool_calls" },
+        { content: "done", finish: "stop" },
+      ]),
+    ]),
+    tools,
+    policy: makePolicy("full", actionDir),
+    terminal: new Terminal(actionDir),
+    model: "scripted",
+    // no `ask` → fail-closed deny
+  });
+  const r = await service.startTurn(undefined, "email the recruiter");
+  assert.equal(sent, false, "send tool must not run without approval");
+  const toolMsg = service.transcript(r.sessionId).find((m) => m.role === "tool" && m.name === "outreach_send");
+  assert.match(String(toolMsg?.content), /denied/);
+});
+
 test("startTurn auto-records the user prompt into the digital twin", async () => {
   const actionDir = mkdtempSync(join(tmpdir(), "vishu-act-"));
   const twin = new DigitalTwin(join(mkdtempSync(join(tmpdir(), "vishu-twin-")), "twin.json"));

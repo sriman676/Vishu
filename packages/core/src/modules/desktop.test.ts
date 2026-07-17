@@ -34,6 +34,16 @@ test("screen_capture: runs the capture command and returns the saved PNG path", 
   }
 });
 
+test("desktop input tools are all send-class (F0 gate always asks)", async () => {
+  const c = ctx();
+  try {
+    await loadModules(MODULES, c, enabledModules({ VISHU_MODULES: "desktop" }));
+    for (const t of ["desktop_type", "desktop_key", "desktop_click"]) assert.equal(c.tools.getAction(t), "send", t);
+  } finally {
+    rmSync(c.workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("screen_capture: a command that writes no file returns a clear error, not a crash", async () => {
   const prev = process.env.VISHU_SCREENSHOT_CMD;
   process.env.VISHU_SCREENSHOT_CMD = JSON.stringify(["node", "-e", NOOP_STUB, "{out}"]);

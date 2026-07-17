@@ -10,22 +10,26 @@ import { RoleRegistry, buildRoles } from "./roles.js";
 test("role registry: dispatches to the assigned AI, falls back otherwise", () => {
   const fallback = new Router([new EchoProvider()]);
   const builder = new Router([new EchoProvider()]);
-  const reg = new RoleRegistry(fallback).assign("builder", builder);
+  const reg = new RoleRegistry(fallback, "small").assign("builder", builder, "big");
 
   assert.equal(reg.for("builder"), builder);
   assert.equal(reg.for("messenger"), fallback); // unassigned → fallback
+  assert.equal(reg.modelFor("builder"), "big"); // pinned model
+  assert.equal(reg.modelFor("messenger"), "small"); // unassigned → fallback model
   assert.deepEqual(reg.roles(), ["builder"]);
 });
 
-test("buildRoles: assigns configured providers and skips unknown ones", () => {
+test("buildRoles: assigns configured providers (with their model) and skips unknown ones", () => {
   const fallback = new Router([new EchoProvider()]);
   const providers: Record<string, ProviderConfig> = {
-    fast: { type: "mock", model: "mock", baseUrl: "", apiKeys: [], keyLabels: [] },
+    fast: { type: "mock", model: "fast-model", baseUrl: "", apiKeys: [], keyLabels: [] },
   };
-  const reg = buildRoles(fallback, providers, { builder: "fast", judge: "missing" });
+  const reg = buildRoles(fallback, "default-model", providers, { builder: "fast", judge: "missing" });
   assert.deepEqual(reg.roles(), ["builder"]); // judge→missing was skipped
   assert.notEqual(reg.for("builder"), fallback); // a real dedicated router
+  assert.equal(reg.modelFor("builder"), "fast-model"); // pinned to its provider's model
   assert.equal(reg.for("judge"), fallback); // unknown provider → fallback
+  assert.equal(reg.modelFor("judge"), "default-model"); // falls back to the default model
 });
 
 /** A validator that fails its first `failTimes` runs, then passes — stands in for a build/test command. */

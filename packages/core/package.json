@@ -14,13 +14,17 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "tsx": "^4.20.0",
-    "typescript": "^5.9.0"
+    "tsx": "^4.20.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
     "@scure/base": "^2.2.0",
+    "typescript": "^5.9.0",
     "viem": "^2.53.1"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.48.0"
   }
 }

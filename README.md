@@ -94,6 +94,7 @@ All config is file + `VISHU_*` env (see `.env.example`). The ones that matter:
 | `VISHU_KEY_MODE` | `failover` (default) / `balance` / `local` |
 | `VISHU_PROVIDER` | provider or preset — auto-detected from the key if unset |
 | `VISHU_MODEL` / `VISHU_BASE_URL` | override model + endpoint |
+| `JARVIS_BUILDER_MODEL` | model for expert/"builder" work (orchestrate, dispatch, `build`); defaults to the largest NVIDIA NIM model when on NIM, else the default model |
 | `VISHU_MODULES` | comma-list of optional modules to enable |
 
 Secrets live in env or the OS keychain — never in the vault, never in the model context.

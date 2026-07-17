@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { loadConfig } from "./config.js";
+import { loadConfig, resolveBuilderModel } from "./config.js";
 
 const base = { VISHU_PROVIDER: "openai" } as NodeJS.ProcessEnv;
 
@@ -102,4 +102,13 @@ test("extended providers: prefix + preset for xai, fireworks, perplexity, and en
   assert.equal(loadConfig({ VISHU_API_KEY: "fw_abc" } as NodeJS.ProcessEnv).provider.baseUrl, "https://api.fireworks.ai/inference/v1");
   assert.equal(loadConfig({ VISHU_API_KEY: "pplx-abc" } as NodeJS.ProcessEnv).provider.model, "sonar");
   assert.equal(loadConfig({ MISTRAL_API_KEY: "abc" } as NodeJS.ProcessEnv).provider.baseUrl, "https://api.mistral.ai/v1");
+});
+
+test("builder model: JARVIS_BUILDER_MODEL overrides; NIM default on NVIDIA; else provider's own model", () => {
+  const nim = loadConfig({ VISHU_API_KEY: "nvapi-abc" } as NodeJS.ProcessEnv).provider;
+  assert.equal(resolveBuilderModel({} as NodeJS.ProcessEnv, nim), "meta/llama-3.1-405b-instruct"); // NIM default
+  assert.equal(resolveBuilderModel({ JARVIS_BUILDER_MODEL: "qwen/qwen2.5-coder-32b-instruct" } as NodeJS.ProcessEnv, nim), "qwen/qwen2.5-coder-32b-instruct");
+
+  const gem = loadConfig({ VISHU_API_KEY: "AIza-abc" } as NodeJS.ProcessEnv).provider; // non-NIM
+  assert.equal(resolveBuilderModel({} as NodeJS.ProcessEnv, gem), gem.model); // nothing to upgrade to
 });

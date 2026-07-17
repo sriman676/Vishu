@@ -45,12 +45,52 @@ function sidecarArgv(env = process.env): string[] {
   return [python, sidecar];
 }
 
-/** Phase 12 voice module (flag: `voice`). STT via an optional Python+whisper sidecar over stdio.
- * Whisper absent (or Python missing) → a clear error, never a crash — the core is never blocked.
- * ponytail: speech-to-text first; TTS and a live meeting agent layer on the same sidecar seam. */
+/** Default argv for the TTS sidecar: `python <bundled tts.py>`. Same override knobs as STT, plus a
+ * dedicated `VISHU_TTS_CMD`/`VISHU_TTS_SIDECAR` so STT and TTS can point at different commands. */
+function ttsArgv(env = process.env): string[] {
+  if (env.VISHU_TTS_CMD) return JSON.parse(env.VISHU_TTS_CMD) as string[];
+  const python = env.VISHU_VOICE_PYTHON ?? "python";
+  const sidecar = env.VISHU_TTS_SIDECAR ?? fileURLToPath(new URL("../../sidecar/tts.py", import.meta.url));
+  return [python, sidecar];
+}
+
+/** Phase 12 voice module (flag: `voice`). STT (whisper) + TTS (elevenlabs→piper) via optional Python
+ * sidecars over the same stdio-JSON seam. An engine/interpreter being absent → a clear error, never a
+ * crash — the core is never blocked. ponytail: half-duplex synth-to-file; per-sentence streaming +
+ * full duplex/barge-in are the named upgrades (PLAN Step 4 latency + Phase 4). */
 export const voiceModule: VishuModule = {
   name: "voice",
   setup({ tools }) {
+    tools.register({
+      name: "voice_speak",
+      description: "Synthesize speech from text (ElevenLabs if ELEVENLABS_API_KEY is set, else local piper). Returns the audio file path.",
+      parameters: {
+        type: "object",
+        properties: {
+          text: { type: "string" },
+          voice_id: { type: "string", description: "ElevenLabs voice id (optional; per-mode voice)" },
+          out_path: { type: "string", description: "where to write the audio (optional; a temp file otherwise)" },
+          play: { type: "boolean", description: "best-effort local playback after synth (optional)" },
+        },
+        required: ["text"],
+      },
+      run: async (args) => {
+        const text = String(args.text ?? "");
+        if (!text) return "error: text is required";
+        try {
+          const res = await callSidecar(ttsArgv(), {
+            text,
+            voice_id: args.voice_id ? String(args.voice_id) : undefined,
+            out_path: args.out_path ? String(args.out_path) : undefined,
+            play: args.play === true,
+          });
+          if (res.error) return `error: ${String(res.error)}`;
+          return typeof res.audio_path === "string" ? `${res.audio_path} (${String(res.engine ?? "?")})` : "error: sidecar returned no audio_path";
+        } catch (e) {
+          return `error: ${e instanceof Error ? e.message : String(e)}`;
+        }
+      },
+    });
     tools.register({
       name: "voice_transcribe",
       description: "Transcribe a local audio file to text via the whisper sidecar. Requires Python + openai-whisper.",

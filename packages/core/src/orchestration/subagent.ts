@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Router } from "../providers/router.js";
+import { ApprovalGate, type AskFn } from "../reliability/approvals.js";
 import type { RunLog } from "../reliability/runlog.js";
 import { makePolicy, type SecurityPolicy, type Tier } from "../security/policy.js";
 import { runToolLoop } from "../tools/loop.js";
@@ -36,6 +37,9 @@ export interface SubagentOptions {
   keepWorktree?: boolean;
   maxIterations?: number;
   runLog?: RunLog;
+  /** Approve the subagent's gated actions. Absent → deny (fail-closed: a background subagent never
+   * sends/spends/deletes/changes settings unattended). Reads + writes in its worktree flow freely. */
+  ask?: AskFn;
 }
 
 export interface SubagentOutcome {
@@ -94,16 +98,33 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentOutcom
     const tier = narrowTier(opts.parentPolicy.tier, opts.tier ?? opts.parentPolicy.tier);
     const policy: SecurityPolicy = makePolicy(tier, worktree);
     const registry = narrowRegistry(opts.parentRegistry, opts.archetype);
-    const messages = [
+    const baseMessages = [
       { role: "system" as const, content: `${opts.archetype.system}\n\nParent context:\n${opts.parentContext}` },
       { role: "user" as const, content: opts.task },
     ];
     const terminal = new Terminal(worktree);
-    const result = await runToolLoop(
-      { router: opts.router, registry, policy, terminal, model: opts.model, runLog: opts.runLog },
-      messages,
-      opts.maxIterations ?? 6,
-    ).finally(() => terminal.close());
+    // Fail-closed F0 gate for the subagent: gated classes need an explicit yes (none wired → denied).
+    const gate = new ApprovalGate("automatic", opts.ask ?? (async () => false), { actionOf: (n) => registry.getAction(n) });
+    // runToolLoop mutates its transcript, so each attempt gets a fresh copy — a retry never inherits a
+    // half-written conversation. retry-once: a mid-run crash (provider exhausted, etc.) gets a single
+    // clean retry before it propagates to the outer catch (worktree cleanup + throw).
+    const runLoop = () =>
+      runToolLoop(
+        { router: opts.router, registry, policy, terminal, model: opts.model, runLog: opts.runLog, approve: (c) => gate.decide(c), ask: opts.ask },
+        baseMessages.map((m) => ({ ...m })),
+        opts.maxIterations ?? 6,
+      );
+    let result: Awaited<ReturnType<typeof runLoop>>;
+    try {
+      try {
+        result = await runLoop();
+      } catch (e) {
+        opts.runLog?.log("subagent_retry", `${opts.archetype.name} crashed, retrying once: ${e instanceof Error ? e.message : String(e)}`);
+        result = await runLoop();
+      }
+    } finally {
+      terminal.close();
+    }
     const validation = opts.validate ? await opts.validate(worktree) : { ok: true, output: "no validator" };
     let merged = false;
     if (validation.ok && opts.harvest) merged = harvestBranch(opts.repoDir, worktree, branch, opts.runLog);
@@ -122,7 +143,14 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentOutcom
  * hand. Single-winner harvest rarely conflicts (only one branch merges). */
 export function harvestBranch(repoDir: string, worktree: string, branch: string, runLog?: RunLog): boolean {
   git(worktree, "add", "-A");
-  git(worktree, "commit", "-m", `vishu: harvest ${branch}`, "--allow-empty");
+  // Nothing changed (a read-only archetype — researcher/critic — or a no-op run): skip the commit+merge
+  // so a read-only dispatch never lands an empty harvest commit (UPGRADES §7). Gating on the actual diff,
+  // not the archetype, also covers a writing archetype that happened to change nothing.
+  if (!git(worktree, "status", "--porcelain").out.trim()) {
+    runLog?.log("branch_harvest", `${branch}: no changes — nothing to harvest`);
+    return false;
+  }
+  git(worktree, "commit", "-m", `vishu: harvest ${branch}`);
   const merge = git(repoDir, "merge", "--no-ff", "--no-edit", branch);
   if (merge.code !== 0) {
     git(repoDir, "merge", "--abort");
@@ -130,6 +158,13 @@ export function harvestBranch(repoDir: string, worktree: string, branch: string,
     return false;
   }
   return true;
+}
+
+/** File-level diff of the most recent harvest merge into `repoDir` — what `orchestrate` landed in the
+ * sandbox, for the user to review before landing it upstream with the gated dev_commit / dev_push. */
+export function mergedDiffStat(repoDir: string): string {
+  const d = git(repoDir, "diff", "--stat", "HEAD^1", "HEAD");
+  return d.code === 0 ? d.out.trim() || "(no file changes)" : "(merge diff unavailable)";
 }
 
 /** Default dev/test validator: run a shell command in the worktree; non-zero exit = branch failed. */
