@@ -20,12 +20,16 @@ export function App() {
   const [seen, setSeen] = useState(0);
   const [model, setModel] = useState(() => localStorage.getItem("vishu.model") ?? "");
   const [voiceOut, setVoiceOut] = useState(() => localStorage.getItem("vishu.voiceOut") === "1");
+  const [handsFree, setHandsFree] = useState(false);
   const [modes, setModes] = useState<Mode[]>([]);
   const [activeMode, setActiveMode] = useState("");
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<Tab>("chat");
   const sessionId = useRef<string | undefined>(undefined);
   const log = useRef<HTMLDivElement>(null);
+  const handsFreeRef = useRef(false); // read inside recognition callbacks (avoids stale state)
+  const recRef = useRef<{ start: () => void; stop: () => void } | null>(null);
+  const busyRef = useRef(false);
 
   useEffect(() => localStorage.setItem("vishu.token", token), [token]);
   useEffect(() => localStorage.setItem("vishu.model", model), [model]);
@@ -104,10 +108,10 @@ export function App() {
     rec.start();
   }
 
-  async function send() {
-    const message = input.trim();
+  async function send(override?: string) {
+    const message = (override ?? input).trim();
     if (!message || busy) return;
-    setInput("");
+    if (override === undefined) setInput("");
     setMsgs((m) => [...m, { role: "user", content: message }]);
     setBusy(true);
     try {
@@ -121,6 +125,43 @@ export function App() {
       setBusy(false);
     }
   }
+
+  // Full-duplex hands-free voice (§11b): continuous recognition auto-sends each final utterance, the reply is
+  // spoken, and a new utterance barges in (cancels TTS) mid-reply — no button between turns. Refs keep the
+  // recognition callbacks reading current busy/send. ponytail: relies on the browser's mic echo-cancellation
+  // to not hear its own TTS; upgrade path is a wake-word or muting recognition during synthesis.
+  busyRef.current = busy;
+  const sendRef = useRef(send);
+  sendRef.current = send;
+
+  function startHandsFree() {
+    const SR = window as unknown as { webkitSpeechRecognition?: new () => any; SpeechRecognition?: new () => any };
+    const Ctor = SR.SpeechRecognition ?? SR.webkitSpeechRecognition;
+    if (!Ctor) return alert("Voice capture isn't supported in this browser.");
+    const rec = new Ctor();
+    rec.continuous = true;
+    rec.interimResults = false;
+    rec.lang = "en-US";
+    rec.onresult = (e: any) => {
+      const r = e.results[e.results.length - 1];
+      if (!r?.isFinal || busyRef.current) return;
+      if ("speechSynthesis" in window) speechSynthesis.cancel(); // barge-in: cut the reply when the user speaks
+      void sendRef.current(r[0].transcript);
+    };
+    rec.onend = () => { if (handsFreeRef.current) try { rec.start(); } catch { /* browser auto-restarts after silence */ } };
+    rec.onerror = (e: any) => { if (e.error === "not-allowed" || e.error === "service-not-allowed") stopHandsFree(); };
+    recRef.current = rec;
+    handsFreeRef.current = true;
+    setHandsFree(true);
+    setVoiceOut(true); // full-duplex is pointless muted
+    try { rec.start(); } catch { /* ignore double-start */ }
+  }
+  function stopHandsFree() {
+    handsFreeRef.current = false;
+    setHandsFree(false);
+    try { recRef.current?.stop(); } catch { /* ignore */ }
+  }
+  useEffect(() => () => { try { recRef.current?.stop(); } catch { /* unmount */ } }, []);
 
   return (
     <div style={S.page}>
@@ -200,13 +241,16 @@ export function App() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
         />
-        <button className="btn" onClick={startVoice} disabled={!token} title="Voice capture (barge-in stops speech)">
+        <button className="btn" onClick={startVoice} disabled={!token || handsFree} title="Push-to-talk: dictate one message into the box">
           🎤
+        </button>
+        <button className={handsFree ? "btn on" : "btn"} onClick={() => (handsFree ? stopHandsFree() : startHandsFree())} disabled={!token} title="Hands-free full-duplex voice: continuous listen → auto-send → speak → barge-in">
+          {handsFree ? "🟢 Live" : "📞"}
         </button>
         <button className={voiceOut ? "btn on" : "btn"} onClick={() => setVoiceOut((v) => !v)} title="Speak replies aloud">
           {voiceOut ? "🔊" : "🔈"}
         </button>
-        <button className="btn primary" onClick={send} disabled={!token || busy || !input.trim()}>
+        <button className="btn primary" onClick={() => send()} disabled={!token || busy || !input.trim()}>
           {busy ? "…" : "Send"}
         </button>
       </footer>
