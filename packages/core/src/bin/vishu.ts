@@ -19,6 +19,7 @@ import { TriggerManager, TriggerStore } from "../automation/triggers.js";
 import { RunStore } from "../automation/runs.js";
 import { WorkflowStore } from "../automation/workflows.js";
 import { registerConnectors } from "../connectors/rpc.js";
+import { registerMeeting } from "../connectors/meeting.js";
 import { LocalConnector } from "../connectors/local.js";
 import { McpClient, type McpSampler, registerMcpTools } from "../connectors/mcp.js";
 import { DomainManager, loadDomains } from "../connectors/domains.js";
@@ -325,6 +326,7 @@ async function serve(): Promise<number> {
   }
   for (const c of tokenChannels()) connectors.set(c.channel, c); // §11h(ii): telegram/slack/sms when tokens set
   registerConnectors(registry, { router, model: config.provider.model, memory, bus, runLog: new RunLog(), voice: profile.render() }, connectors);
+  registerMeeting(registry, { router, model: config.provider.model, memory }); // §12e meeting agent: transcript→summary (live-join owed)
   // §12c inbound: scheduled multi-connector auto-fetch. Each enabled source (Gmail POP3, watched folder,
   // …) polls on its interval → daily-driver. Per-source on/off via VISHU_SYNC_<NAME>, interval via
   // VISHU_SYNC_<NAME>_MS / VISHU_SYNC_MS. Sources with no config are auto-disabled (no-op).
