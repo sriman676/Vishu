@@ -66,6 +66,8 @@ const DEFAULT_EGRESS_HOSTS = [
   "api.groq.com", "api.mistral.ai", "api.together.xyz", "api.fireworks.ai",
   "api.deepseek.com", "api.perplexity.ai", "api.cohere.ai", "api.x.ai",
   "openrouter.ai", "generativelanguage.googleapis.com",
+  // Known-good send-class channel vendors (§2c / §11h) — declared egress for configured outbound.
+  "api.telegram.org", "slack.com", "api.twilio.com",
 ];
 
 export interface EgressDecision {

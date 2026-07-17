@@ -1,3 +1,4 @@
+import { guardSendEgress } from "./egress-guard.js";
 import type { Connector } from "./types.js";
 
 /** §11h(ii) channels: Telegram / Slack / SMS outbound. Same fetch-POST spine as WebhookConnector — the
@@ -82,6 +83,7 @@ export class TokenChannelConnector implements Connector {
   async send(to: string, text: string): Promise<void> {
     const req = buildRequest(this.channel, to, text, this.creds);
     if (!req) throw new Error(`[${this.channel}] not configured — set the ${this.channel} token(s) in .env`);
+    guardSendEgress(this.channel, req.url);
     const res = await this.fetchImpl(req.url, req.init);
     if (!res.ok) throw new Error(`[${this.channel}] send failed: ${res.status} ${res.statusText}`);
   }

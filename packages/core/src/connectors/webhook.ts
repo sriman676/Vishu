@@ -1,3 +1,5 @@
+import { registerEgressHosts } from "../security/policy.js";
+import { guardSendEgress } from "./egress-guard.js";
 import type { Connector } from "./types.js";
 
 /** A real, credential-free outbound connector: POSTs `{ to, text }` as JSON to a configured webhook URL
@@ -9,9 +11,14 @@ export class WebhookConnector implements Connector {
   constructor(
     readonly channel: string,
     private readonly url: string,
-  ) {}
+  ) {
+    // Operator pinned this URL via config → it's a declared egress host (§2c). Self-register so the
+    // send-class guard logs+allows it instead of refusing the operator's own configured webhook.
+    try { registerEgressHosts([new URL(url).hostname]); } catch { /* malformed URL surfaces on send */ }
+  }
 
   async send(to: string, text: string): Promise<void> {
+    guardSendEgress(`webhook:${this.channel}`, this.url);
     const res = await fetch(this.url, {
       method: "POST",
       headers: { "content-type": "application/json" },
