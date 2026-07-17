@@ -62,3 +62,39 @@ test("voice_transcribe: returns text via the sidecar, surfaces sidecar errors, n
     else process.env.VISHU_VOICE_CMD = prev;
   }
 });
+
+// A node TTS stub that actually writes an audio file (so the RPC's readFile→base64 has real bytes).
+const TTS_FILE_STUB = `const fs=require("fs"),os=require("os"),path=require("path");let b="";process.stdin.on("data",d=>b+=d);process.stdin.on("end",()=>{JSON.parse(b);const f=path.join(os.tmpdir(),"vishu-tts-test-"+Date.now()+".wav");fs.writeFileSync(f,Buffer.from("RIFFfake"));process.stdout.write(JSON.stringify({audio_path:f,engine:"piper"})+"\\n")});`;
+
+test("§12b voice RPC: transcribe (base64→whisper) and speak (piper→base64) round-trip headless", async () => {
+  const prevV = process.env.VISHU_VOICE_CMD;
+  const prevT = process.env.VISHU_TTS_CMD;
+  try {
+    const rpc = new Registry();
+    const c = { tools: new ToolRegistry(), rpc, bus: new EventBus(), workspaceDir: "." };
+    await loadModules(MODULES, c, enabledModules({ VISHU_MODULES: "voice" }));
+    const call = (method: string, params: unknown) => rpc.handle({ jsonrpc: "2.0", id: 1, method, params });
+
+    // STT: a base64 blob (as the browser mic sends) is written to a temp file the sidecar transcribes.
+    process.env.VISHU_VOICE_CMD = JSON.stringify(["node", "-e", ECHO_STUB]);
+    const stt = await call("vishu.voice_transcribe", { audio_base64: Buffer.from("wavbytes").toString("base64"), format: "wav" });
+    assert.equal(stt.result?.ok, true);
+    assert.match((stt.result as { result: { text: string } }).result.text, /^heard:.*\.wav$/);
+
+    // TTS: text → piper wav → the RPC streams the bytes back as base64 the browser can play.
+    process.env.VISHU_TTS_CMD = JSON.stringify(["node", "-e", TTS_FILE_STUB]);
+    const tts = await call("vishu.voice_speak", { text: "hello there" });
+    assert.equal(tts.result?.ok, true);
+    const body = (tts.result as { result: { engine: string; mime: string; audio_base64: string } }).result;
+    assert.equal(body.engine, "piper");
+    assert.equal(body.mime, "audio/wav");
+    assert.equal(Buffer.from(body.audio_base64, "base64").toString(), "RIFFfake");
+
+    assert.equal((await call("vishu.voice_speak", { text: "" })).result?.ok, false); // empty text rejected
+  } finally {
+    if (prevV === undefined) delete process.env.VISHU_VOICE_CMD;
+    else process.env.VISHU_VOICE_CMD = prevV;
+    if (prevT === undefined) delete process.env.VISHU_TTS_CMD;
+    else process.env.VISHU_TTS_CMD = prevT;
+  }
+});

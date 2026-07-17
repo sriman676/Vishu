@@ -1,5 +1,9 @@
 import { spawn } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { err, ok } from "../transport/rpc.js";
 import type { VishuModule } from "./registry.js";
 
 /** Spawn a sidecar process, send ONE JSON request line, read ONE JSON response line. This is the
@@ -58,9 +62,11 @@ function ttsArgv(env = process.env): string[] {
  * sidecars over the same stdio-JSON seam. An engine/interpreter being absent → a clear error, never a
  * crash — the core is never blocked. ponytail: half-duplex synth-to-file; per-sentence streaming +
  * full duplex/barge-in are the named upgrades (PLAN Step 4 latency + Phase 4). */
+const AUDIO_MIME: Record<string, string> = { ".wav": "audio/wav", ".mp3": "audio/mpeg" };
+
 export const voiceModule: VishuModule = {
   name: "voice",
-  setup({ tools }) {
+  setup({ tools, rpc }) {
     tools.register({
       name: "voice_speak",
       description: "Synthesize speech from text (ElevenLabs if ELEVENLABS_API_KEY is set, else local piper). Returns the audio file path.",
@@ -110,6 +116,49 @@ export const voiceModule: VishuModule = {
           return `error: ${e instanceof Error ? e.message : String(e)}`;
         }
       },
+    });
+
+    // §12b: the same STT/TTS pipeline over RPC so a headless client (or the Tauri UI, replacing its
+    // browser Web Speech dependency) can drive voice without going through the agent tool loop. Audio
+    // crosses as base64 so the browser never needs to read a server-side file path.
+    rpc.register("vishu.voice_transcribe", async (params) => {
+      const p = (params ?? {}) as { audio_path?: string; audio_base64?: string; format?: string; model?: string };
+      // A base64 blob (browser mic capture) is written to a temp file the sidecar can read, then removed.
+      let path = p.audio_path;
+      let tempDir: string | undefined;
+      if (!path && p.audio_base64) {
+        tempDir = mkdtempSync(join(tmpdir(), "vishu-stt-"));
+        path = join(tempDir, `in.${(p.format || "wav").replace(/[^a-z0-9]/gi, "")}`);
+        writeFileSync(path, Buffer.from(p.audio_base64, "base64"));
+      }
+      if (!path) return err("invalid_params", "audio_path or audio_base64 is required");
+      try {
+        const res = await callSidecar(sidecarArgv(), { audio_path: path, model: p.model });
+        if (res.error) return err("stt_failed", String(res.error));
+        return ok({ text: String(res.text ?? ""), engine: res.engine ? String(res.engine) : undefined });
+      } catch (e) {
+        return err("stt_failed", e instanceof Error ? e.message : String(e));
+      } finally {
+        if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    rpc.register("vishu.voice_speak", async (params) => {
+      const p = (params ?? {}) as { text?: string; voice_id?: string };
+      const text = (p.text ?? "").trim();
+      if (!text) return err("invalid_params", "text is required");
+      try {
+        const res = await callSidecar(ttsArgv(), { text, voice_id: p.voice_id });
+        if (res.error) return err("tts_failed", String(res.error));
+        const audioPath = typeof res.audio_path === "string" ? res.audio_path : "";
+        if (!audioPath) return err("tts_failed", "sidecar returned no audio_path");
+        const bytes = readFileSync(audioPath);
+        rmSync(audioPath, { force: true }); // stream the bytes back; don't leave temp audio on disk
+        const mime = AUDIO_MIME[extname(audioPath).toLowerCase()] ?? "application/octet-stream";
+        return ok({ engine: String(res.engine ?? "?"), mime, audio_base64: bytes.toString("base64") });
+      } catch (e) {
+        return err("tts_failed", e instanceof Error ? e.message : String(e));
+      }
     });
   },
 };

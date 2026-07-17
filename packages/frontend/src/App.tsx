@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { type Mode, modeActivate, modeList, startTurn, subscribeEvents } from "./api.js";
+import { type Mode, modeActivate, modeList, startTurn, subscribeEvents, voiceSpeak, voiceTranscribe } from "./api.js";
+import { type Recording, startRecording } from "./voiceCapture.js";
 import { Orb } from "./Orb.js";
 import { Activity, Automation, Board, Calendar, Eval, Inbox, Matters, Memory, Settings } from "./Panels.js";
 import { Tokens } from "./Tokens.js";
@@ -23,8 +24,10 @@ export function App() {
   const [modes, setModes] = useState<Mode[]>([]);
   const [activeMode, setActiveMode] = useState("");
   const [busy, setBusy] = useState(false);
+  const [recording, setRecording] = useState(false);
   const [tab, setTab] = useState<Tab>("chat");
   const sessionId = useRef<string | undefined>(undefined);
+  const rec = useRef<Recording | null>(null);
   const log = useRef<HTMLDivElement>(null);
 
   useEffect(() => localStorage.setItem("vishu.token", token), [token]);
@@ -68,13 +71,25 @@ export function App() {
     if (shared) setInput((cur) => cur || shared);
   }, []);
 
-  // Speak the assistant reply in the active mode's voice (§8): match the mode's voiceId hint loosely against
-  // the browser's installed SpeechSynthesis voices; fall back to the default when none matches.
-  function speak(text: string) {
-    if (!voiceOut || !("speechSynthesis" in window)) return;
+  // Speak the assistant reply (§12b): primary path is the core Piper TTS over RPC (native/offline, works
+  // cross-browser). Falls back to the browser SpeechSynthesis when the voice module is off / RPC fails.
+  async function speak(text: string) {
+    if (!voiceOut || !text.trim()) return;
+    const want = modes.find((m) => m.name === activeMode)?.voiceId;
+    try {
+      const { audio_base64, mime } = await voiceSpeak(token, text, want);
+      const audio = new Audio(`data:${mime};base64,${audio_base64}`);
+      await audio.play();
+      return;
+    } catch {
+      speakBrowser(text, want); // graceful fallback: core voice unavailable
+    }
+  }
+
+  function speakBrowser(text: string, want?: string) {
+    if (!("speechSynthesis" in window)) return;
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    const want = modes.find((m) => m.name === activeMode)?.voiceId;
     if (want) {
       const v = speechSynthesis.getVoices().find((v) => v.name.toLowerCase().includes(want.toLowerCase()));
       if (v) u.voice = v;
@@ -93,15 +108,41 @@ export function App() {
     }
   }
 
-  function startVoice() {
-    if ("speechSynthesis" in window) speechSynthesis.cancel(); // barge-in: stop TTS the moment the mic opens
-    const SR = (window as unknown as { webkitSpeechRecognition?: new () => any; SpeechRecognition?: new () => any });
+  // §12b: capture the mic and transcribe server-side via whisper.cpp (primary), so voice input no longer
+  // depends on the browser's SpeechRecognition. Click to start, click again to stop + transcribe. Falls
+  // back to the browser recognizer when getUserMedia/MediaRecorder or the core voice RPC is unavailable.
+  async function startVoice() {
+    if ("speechSynthesis" in window) speechSynthesis.cancel(); // barge-in: stop any TTS when the mic opens
+    if (recording) {
+      const r = rec.current;
+      rec.current = null;
+      setRecording(false);
+      if (!r) return;
+      try {
+        const wav = await r.stop();
+        const { text } = await voiceTranscribe(token, wav);
+        if (text.trim()) setInput((cur) => (cur ? `${cur} ` : "") + text.trim());
+      } catch (e) {
+        setMsgs((m) => [...m, { role: "error", content: `voice transcribe failed: ${e instanceof Error ? e.message : String(e)}` }]);
+      }
+      return;
+    }
+    try {
+      rec.current = await startRecording();
+      setRecording(true);
+    } catch {
+      startVoiceBrowser(); // no mic API → browser recognizer fallback
+    }
+  }
+
+  function startVoiceBrowser() {
+    const SR = window as unknown as { webkitSpeechRecognition?: new () => any; SpeechRecognition?: new () => any };
     const Ctor = SR.SpeechRecognition ?? SR.webkitSpeechRecognition;
     if (!Ctor) return alert("Voice capture isn't supported in this browser.");
-    const rec = new Ctor();
-    rec.lang = "en-US";
-    rec.onresult = (e: any) => setInput((cur) => (cur ? `${cur} ` : "") + e.results[0][0].transcript);
-    rec.start();
+    const r = new Ctor();
+    r.lang = "en-US";
+    r.onresult = (e: any) => setInput((cur) => (cur ? `${cur} ` : "") + e.results[0][0].transcript);
+    r.start();
   }
 
   async function send() {
@@ -201,8 +242,8 @@ export function App() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
         />
-        <button className="btn" onClick={startVoice} disabled={!token} title="Voice capture (barge-in stops speech)">
-          🎤
+        <button className={recording ? "btn on" : "btn"} onClick={startVoice} disabled={!token} title={recording ? "Stop & transcribe" : "Voice capture (whisper.cpp)"}>
+          {recording ? "⏹" : "🎤"}
         </button>
         <button className={voiceOut ? "btn on" : "btn"} onClick={() => setVoiceOut((v) => !v)} title="Speak replies aloud">
           {voiceOut ? "🔊" : "🔈"}

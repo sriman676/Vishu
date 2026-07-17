@@ -106,6 +106,11 @@ export const automationSaveWorkflow = (token: string, name: string, steps: strin
   rpc<{ name: string }>(token, "vishu.automation_save_workflow", { name, steps });
 export const automationAddTrigger = (token: string, trigger: Trigger) =>
   rpc<{ id: string }>(token, "vishu.automation_add_trigger", trigger);
+// §12b server-side voice: STT (whisper.cpp) + TTS (Piper) over RPC, replacing the browser Web Speech API.
+export const voiceSpeak = (token: string, text: string, voiceId?: string) =>
+  rpc<{ engine: string; mime: string; audio_base64: string }>(token, "vishu.voice_speak", { text, voice_id: voiceId });
+export const voiceTranscribe = (token: string, audioBase64: string, format = "wav") =>
+  rpc<{ text: string; engine?: string }>(token, "vishu.voice_transcribe", { audio_base64: audioBase64, format });
 
 /** Subscribe to the core's SSE bus (tool:sync, notifications). Returns an unsubscribe. */
 export function subscribeEvents(token: string, onEvent: (e: unknown) => void): () => void {
