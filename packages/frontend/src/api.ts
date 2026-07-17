@@ -93,6 +93,20 @@ export interface TokenReport {
 export const tokenReport = (token: string, days = 7) =>
   rpc<TokenReport>(token, "vishu.token_report", { days });
 
+// §12d visual workflow builder: propose → review → save round-trips to the workflow store + triggers.json.
+export interface Workflow { name: string; steps: string[] }
+export type TriggerSpec =
+  | { type: "schedule"; everyMs: number }
+  | { type: "event"; domain: string; eventType?: string }
+  | { type: "file"; path: string };
+export interface Trigger { id: string; spec: TriggerSpec; workflow: string }
+export const automationList = (token: string) =>
+  rpc<{ workflows: Workflow[]; triggers: Trigger[] }>(token, "vishu.automation_list");
+export const automationSaveWorkflow = (token: string, name: string, steps: string[]) =>
+  rpc<{ name: string }>(token, "vishu.automation_save_workflow", { name, steps });
+export const automationAddTrigger = (token: string, trigger: Trigger) =>
+  rpc<{ id: string }>(token, "vishu.automation_add_trigger", trigger);
+
 /** Subscribe to the core's SSE bus (tool:sync, notifications). Returns an unsubscribe. */
 export function subscribeEvents(token: string, onEvent: (e: unknown) => void): () => void {
   const es = new EventSource(`/events?token=${encodeURIComponent(token)}`);

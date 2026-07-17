@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { Registry } from "../transport/rpc.js";
 import { EventBus } from "../transport/events.js";
+import { registerAutomation } from "./rpc.js";
 import { SchedulerGate } from "./gate.js";
 import { attachNotificationSink } from "./notify.js";
 import { evalGate } from "./sensor.js";
-import { TriggerManager } from "./triggers.js";
+import { TriggerManager, TriggerStore } from "./triggers.js";
 import { WorkflowStore } from "./workflows.js";
 
 test("resource sensor: pauses the gate when busy, resumes when idle", () => {
@@ -35,6 +37,36 @@ function setup(autonomy: "automatic" | "ask_every_time" = "automatic") {
 }
 
 const drain = () => new Promise((r) => setImmediate(r)); // let fire-and-forget workflow runs settle
+
+test("§12d builder round-trip: save_workflow + add_trigger persist to triggers.json and show in automation_list", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "vishu-12d-"));
+  const store = new WorkflowStore(join(dir, "workflows"));
+  const triggerFile = join(dir, "triggers.json");
+  const manager = new TriggerManager({
+    bus: new EventBus(),
+    store,
+    gate: new SchedulerGate(),
+    autonomy: "automatic",
+    run: async (s) => s,
+    triggerStore: new TriggerStore(triggerFile),
+  });
+  const rpc = new Registry();
+  registerAutomation(rpc, store, manager);
+  const call = (method: string, params: unknown) => rpc.handle({ jsonrpc: "2.0", id: 1, method, params });
+
+  // create → save the workflow, then attach a schedule trigger (the exact calls the UI Save button makes).
+  assert.equal((await call("vishu.automation_save_workflow", { name: "digest", steps: ["fetch", "summarize"] })).result?.ok, true);
+  assert.equal((await call("vishu.automation_add_trigger", { id: "d1", spec: { type: "schedule", everyMs: 3_600_000 }, workflow: "digest" })).result?.ok, true);
+
+  // the trigger persisted to triggers.json (survives restart)…
+  const persisted = JSON.parse(readFileSync(triggerFile, "utf8")) as { id: string; workflow: string }[];
+  assert.deepEqual(persisted.map((t) => [t.id, t.workflow]), [["d1", "digest"]]);
+
+  // …and both show up in automation_list.
+  const listed = (await call("vishu.automation_list", null)).result as { result: { workflows: { name: string }[]; triggers: { id: string }[] } };
+  assert.deepEqual(listed.result.workflows.map((w) => w.name), ["digest"]);
+  assert.deepEqual(listed.result.triggers.map((t) => t.id), ["d1"]);
+});
 
 test("a scheduled trigger fires on the cron tick and runs a saved workflow unattended", async () => {
   const { store, manager, ran } = setup();

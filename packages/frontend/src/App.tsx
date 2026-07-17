@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { type Mode, modeActivate, modeList, startTurn, subscribeEvents } from "./api.js";
 import { Orb } from "./Orb.js";
-import { Activity, Board, Calendar, Eval, Inbox, Matters, Memory, Settings } from "./Panels.js";
+import { Activity, Automation, Board, Calendar, Eval, Inbox, Matters, Memory, Settings } from "./Panels.js";
 import { Tokens } from "./Tokens.js";
 
-type Tab = "chat" | "inbox" | "matters" | "board" | "calendar" | "activity" | "notifications" | "tokens" | "eval" | "memory" | "settings";
+type Tab = "chat" | "inbox" | "matters" | "board" | "calendar" | "automation" | "activity" | "notifications" | "tokens" | "eval" | "memory" | "settings";
 
 interface Msg {
   role: "user" | "assistant" | "error";
@@ -128,7 +128,7 @@ export function App() {
         <strong style={{ fontSize: 18, letterSpacing: "-0.02em", color: "var(--accent)", fontFamily: "var(--font-display)" }}>Vishu</strong>
         <Orb />
         <nav style={S.tabs}>
-          {(["chat", "inbox", "matters", "board", "calendar", "activity", "notifications", "tokens", "eval", "memory", "settings"] as Tab[]).map((t) => (
+          {(["chat", "inbox", "matters", "board", "calendar", "automation", "activity", "notifications", "tokens", "eval", "memory", "settings"] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? "btn on" : "btn"} onClick={() => setTab(t)} disabled={t !== "chat" && !token}>
               {t === "notifications" ? `Notifications${notifs.length > seen ? ` (${notifs.length - seen})` : ""}` : t[0].toUpperCase() + t.slice(1)}
             </button>
@@ -155,6 +155,7 @@ export function App() {
       {tab === "matters" && <Matters token={token} />}
       {tab === "board" && <Board token={token} />}
       {tab === "calendar" && <Calendar token={token} />}
+      {tab === "automation" && <Automation token={token} />}
       {tab === "activity" && <Activity events={events} />}
       {tab === "tokens" && <Tokens token={token} />}
       {tab === "eval" && <Eval token={token} />}
