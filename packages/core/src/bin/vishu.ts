@@ -72,7 +72,7 @@ import { analyzeRepo, applyTrust, isTrustedRepo, llmAdvisory, renderAnalysis, se
 import { registerBuiltins } from "../tools/builtins.js";
 import { runToolLoop } from "../tools/loop.js";
 import { ToolRegistry } from "../tools/registry.js";
-import { Terminal } from "../tools/terminal.js";
+import { sandboxedTerminal } from "../tools/terminal.js";
 import { initToken } from "../transport/auth.js";
 import { registerUsage } from "../usage/rpc.js";
 import { BudgetWatcher } from "../usage/budget.js";
@@ -240,7 +240,7 @@ async function serve(): Promise<number> {
     router,
     tools,
     policy: makePolicy("full", config.paths.actionDir),
-    terminal: new Terminal(config.paths.actionDir),
+    terminal: sandboxedTerminal(config.paths.actionDir),
     model: config.provider.model,
     runLog: new RunLog(),
     twin,
@@ -261,7 +261,7 @@ async function serve(): Promise<number> {
   // Each task gets its own Terminal so concurrent shells don't interleave; the session store is shared.
   const agentConcurrency = Number(process.env.VISHU_AGENT_CONCURRENCY) || 2;
   const agentQueue = new AgentQueue(async (sid, msg) => {
-    const terminal = new Terminal(config.paths.actionDir);
+    const terminal = sandboxedTerminal(config.paths.actionDir);
     try {
       const svc = new AgentService(
         { router, tools, policy: makePolicy("full", config.paths.actionDir), terminal, model: config.provider.model, runLog: new RunLog(), twin, profile, mode: modes, ask, audit, rememberFile, sendCapFile, sendCap, decisions, suggest, tracer },
@@ -391,7 +391,7 @@ async function agent(text: string): Promise<number> {
       router: buildRouter(config.provider, usageLog(config)),
       registry,
       policy: makePolicy("full", config.paths.actionDir),
-      terminal: new Terminal(config.paths.actionDir),
+      terminal: sandboxedTerminal(config.paths.actionDir),
       model: config.provider.model,
     },
     [
@@ -528,7 +528,7 @@ async function sweBenchCmd(args: string[]): Promise<number> {
 
   const runAgent = async (repoDir: string, problem: string): Promise<void> => {
     const registry = registerBuiltins(new ToolRegistry());
-    const terminal = new Terminal(repoDir);
+    const terminal = sandboxedTerminal(repoDir);
     try {
       await runToolLoop(
         { router, registry, policy: makePolicy("full", repoDir), terminal, model },
@@ -583,7 +583,7 @@ async function mcpServe(argv: string[]): Promise<number> {
   const memory = new MemoryStore(config.paths.vaultDir, config.paths.memoryDbFile, join(config.paths.workspaceDir, "memory-events.log"));
   registerMemoryTools(tools, memory, () => ""); // lexical recall (no embedder wired here) over the whole vault
   const gate = new ApprovalGate("ask_every_time", async () => false, { actionOf: (n) => tools.getAction(n) });
-  const ctx: ToolContext = { policy: makePolicy("full", config.paths.actionDir), terminal: new Terminal(config.paths.actionDir) };
+  const ctx: ToolContext = { policy: makePolicy("full", config.paths.actionDir), terminal: sandboxedTerminal(config.paths.actionDir) };
   const server = buildVishuMcpServer(tools, gate, ctx);
 
   const httpIdx = argv.indexOf("--http");

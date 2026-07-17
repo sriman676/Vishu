@@ -1,5 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { type Sandbox, noopSandbox } from "./sandbox.js";
+import { type Sandbox, autoSandbox, noopSandbox } from "./sandbox.js";
 
 export interface ExecResult {
   stdout: string;
@@ -95,4 +95,12 @@ export class Terminal {
     this.child?.kill();
     this.child = undefined;
   }
+}
+
+/**
+ * A Terminal wired to the auto-selected sandbox (Docker when up, path-jail policy otherwise). Use this
+ * at production call sites; tests construct `new Terminal(dir)` directly to stay on the hermetic noop.
+ */
+export function sandboxedTerminal(cwd: string): Terminal {
+  return new Terminal(cwd, autoSandbox());
 }

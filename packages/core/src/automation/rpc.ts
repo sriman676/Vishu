@@ -1,6 +1,6 @@
 import type { Autonomy } from "../reliability/approvals.js";
 import { shellValidator } from "../reliability/verify.js";
-import { Terminal } from "../tools/terminal.js";
+import { sandboxedTerminal } from "../tools/terminal.js";
 import type { EventBus } from "../transport/events.js";
 import { err, ok, type Registry } from "../transport/rpc.js";
 import { autoFixPass } from "./autofix.js";
@@ -44,7 +44,7 @@ export function registerAutofix(registry: Registry, deps: AutofixDeps): void {
     const p = (params ?? {}) as { command?: string; maxAttempts?: number };
     if (!p.command) return err("invalid_params", "command is required");
     const command = p.command;
-    const terminal = new Terminal(deps.actionDir);
+    const terminal = sandboxedTerminal(deps.actionDir);
     try {
       const result = await autoFixPass({
         validator: shellValidator(terminal, command),

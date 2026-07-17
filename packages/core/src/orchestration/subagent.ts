@@ -8,7 +8,7 @@ import type { RunLog } from "../reliability/runlog.js";
 import { makePolicy, type SecurityPolicy, type Tier } from "../security/policy.js";
 import { runToolLoop } from "../tools/loop.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import { Terminal } from "../tools/terminal.js";
+import { sandboxedTerminal } from "../tools/terminal.js";
 import { type Archetype, narrowRegistry, narrowTier } from "./archetypes.js";
 
 export interface ValidationResult {
@@ -102,7 +102,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentOutcom
       { role: "system" as const, content: `${opts.archetype.system}\n\nParent context:\n${opts.parentContext}` },
       { role: "user" as const, content: opts.task },
     ];
-    const terminal = new Terminal(worktree);
+    const terminal = sandboxedTerminal(worktree);
     // Fail-closed F0 gate for the subagent: gated classes need an explicit yes (none wired → denied).
     const gate = new ApprovalGate("automatic", opts.ask ?? (async () => false), { actionOf: (n) => registry.getAction(n) });
     // runToolLoop mutates its transcript, so each attempt gets a fresh copy — a retry never inherits a
@@ -170,7 +170,7 @@ export function mergedDiffStat(repoDir: string): string {
 /** Default dev/test validator: run a shell command in the worktree; non-zero exit = branch failed. */
 export function commandValidator(command: string): (worktreeDir: string) => Promise<ValidationResult> {
   return async (worktreeDir) => {
-    const term = new Terminal(worktreeDir);
+    const term = sandboxedTerminal(worktreeDir);
     try {
       const out = await term.exec(command);
       return { ok: out.exitCode === 0, output: out.stdout };
