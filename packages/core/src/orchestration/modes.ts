@@ -7,6 +7,7 @@ import { ok, type Registry } from "../transport/rpc.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext } from "../tools/types.js";
 import { narrowRegistry } from "./archetypes.js";
+import { routeAndActivate } from "./lane.js";
 
 /** A Mode/mood: a persona the WHOLE agent switches into. Unlike an Archetype (a subagent role), a Mode
  * reshapes the main agent's surface — its system prompt, the tool subset it may use, the memory folder it
@@ -183,6 +184,18 @@ export function registerModeTools(registry: ToolRegistry, modes: ModeManager): v
         .list()
         .map((m) => `${m.name === active ? "* " : "- "}${m.name} — ${m.tools === "inherit" ? "all tools" : `${m.tools.length} tool(s)`}, memory:${m.memoryFolder}${m.voiceId ? `, voice:${m.voiceId}` : ""}`)
         .join("\n");
+    },
+  });
+
+  registry.register({
+    name: "auto_mode",
+    meta: { action: "write" },
+    description:
+      "Brain⇄builder router: read a request and switch the agent 100% into the lane it needs — PA/ops → pa-master (brain), engineering → co-founder (builder). Call at the start of a turn to auto-pick the persona.",
+    parameters: { type: "object", properties: { request: { type: "string" } }, required: ["request"] },
+    run: async (args) => {
+      const r = routeAndActivate(modes, String(args.request ?? ""));
+      return `lane=${r.lane} -> ${r.mode} mode${r.activated ? "" : " (activate failed)"}.`;
     },
   });
 
