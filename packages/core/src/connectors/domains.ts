@@ -21,6 +21,59 @@ export interface DomainConfig {
   requireEnv?: string;
 }
 
+/** Curated MCP servers connectable by name via `vishu connect <name>` — each is a DomainConfig template
+ * folded into jarvis.domains.json and mounted (gated) on the next `vishu jarvis`. Anything not listed is
+ * still connectable with `vishu connect <id> --cmd <cmd> [--args <json>]`, so the gateway reaches ANY MCP.
+ * ponytail: three vetted, correct entries + a generic escape hatch — not a hardcoded catalogue of every app
+ * (Composio already fans out to 1000+). New npx package = vet before first enable (user rule). */
+export const KNOWN_MCP: Record<string, DomainConfig> = {
+  // Microsoft's official Playwright MCP: real browser control (navigate/click/type/submit). A persistent
+  // profile lets the user do an OAuth "login once" by hand, then the session is reused. Mutating tools gate
+  // (send/change_setting); navigation + snapshots read. VET before first enable.
+  browser: {
+    id: "browser",
+    cmd: "npx",
+    args: ["-y", "@playwright/mcp@latest"],
+    reconnect: true,
+    actions: {
+      browser_click: "send",
+      browser_type: "send",
+      browser_fill_form: "send",
+      browser_press_key: "send",
+      browser_select_option: "send",
+      browser_file_upload: "send",
+      browser_drag: "send",
+      browser_drop: "send", // drops files/elements onto the page — an outward mutation
+      browser_handle_dialog: "send", // can confirm a native dialog (e.g. accept a delete prompt)
+      browser_evaluate: "change_setting", // runs arbitrary page JS
+      browser_run_code_unsafe: "change_setting", // arbitrary code execution — must never auto-run
+      "*": "read", // navigate/snapshot/screenshot/wait/tabs/console/network = read (auto)
+    },
+  },
+  github: {
+    id: "github",
+    cmd: "npx",
+    args: ["-y", "@modelcontextprotocol/server-github"],
+    requireEnv: "GITHUB_PERSONAL_ACCESS_TOKEN",
+    reconnect: false,
+    egressHosts: ["api.github.com"],
+  },
+  composio: {
+    id: "composio",
+    cmd: "npx",
+    args: ["-y", "@composio/mcp@latest", "start", "--transport", "stdio"],
+    requireEnv: "COMPOSIO_API_KEY",
+    reconnect: false,
+    egressHosts: ["mcp.composio.dev", "backend.composio.dev", "api.composio.dev"],
+  },
+};
+
+/** Replace an existing domain with the same id (idempotent connect) or append it. Pure — used by the
+ * `vishu connect` command to edit jarvis.domains.json without duplicating entries. */
+export function upsertDomain(list: DomainConfig[], cfg: DomainConfig): DomainConfig[] {
+  return [...list.filter((d) => d.id !== cfg.id), cfg];
+}
+
 /** Read `jarvis.domains.json`. Optional: a missing/invalid file means "no domains" (never throws). */
 export function loadDomains(file: string): DomainConfig[] {
   try {

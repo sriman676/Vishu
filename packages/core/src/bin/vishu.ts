@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { registerAgent, registerAgentQueue } from "../agent/rpc.js";
@@ -21,7 +21,7 @@ import { WorkflowStore } from "../automation/workflows.js";
 import { registerConnectors } from "../connectors/rpc.js";
 import { LocalConnector } from "../connectors/local.js";
 import { McpClient, type McpSampler, registerMcpTools } from "../connectors/mcp.js";
-import { DomainManager, loadDomains } from "../connectors/domains.js";
+import { DomainManager, KNOWN_MCP, type DomainConfig, loadDomains, upsertDomain } from "../connectors/domains.js";
 import { WebhookConnector } from "../connectors/webhook.js";
 import { StubMailConnector } from "../connectors/daily.js";
 import { GmailConnector } from "../connectors/gmail.js";
@@ -118,6 +118,48 @@ async function connectMcpServers(tools: ToolRegistry, eventBus: typeof bus, samp
       process.stderr.write(`[mcp] ${s.id} failed: ${e instanceof Error ? e.message : String(e)}\n`);
     }
   }
+}
+
+/** `vishu connect <name>` — fold a downstream MCP into jarvis.domains.json so it auto-mounts (gated)
+ * next `vishu jarvis`. `<name>` from the curated KNOWN_MCP, or any custom server via `--cmd`/`--args`.
+ * `--list` shows what's connectable and what's already mounted. This is the single "connect to X" seam. */
+function connectCmd(argv: string[]): number {
+  const domainsFile = process.env.VISHU_DOMAINS_FILE || join(process.cwd(), "jarvis.domains.json");
+  const current = loadDomains(domainsFile);
+  const name = argv.find((a) => !a.startsWith("--"));
+  if (argv[0] === "--list" || !name) {
+    process.stdout.write(`known:   ${Object.keys(KNOWN_MCP).join(", ")}\n`);
+    process.stdout.write(current.length ? `mounted: ${current.map((d) => d.id).join(", ")}\n` : "mounted: (none)\n");
+    return 0;
+  }
+  const flag = (f: string): string | undefined => {
+    const i = argv.indexOf(f);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+  const cmdOv = flag("--cmd");
+  let cfg: DomainConfig;
+  if (KNOWN_MCP[name]) cfg = { ...KNOWN_MCP[name] };
+  else if (cmdOv) cfg = { id: name, cmd: cmdOv };
+  else
+    return usageErr(
+      `unknown service "${name}". known: ${Object.keys(KNOWN_MCP).join(", ")}. custom: vishu connect <id> --cmd <cmd> [--args <json-array>] [--cwd <dir>]`,
+    );
+  if (cmdOv) cfg.cmd = cmdOv;
+  const argsOv = flag("--args");
+  if (argsOv) {
+    try {
+      cfg.args = JSON.parse(argsOv) as string[];
+    } catch {
+      return usageErr("--args must be a JSON array, e.g. --args '[\"-m\",\"server\"]'");
+    }
+  }
+  const cwdOv = flag("--cwd");
+  if (cwdOv) cfg.cwd = resolve(cwdOv);
+  writeFileSync(domainsFile, `${JSON.stringify({ domains: upsertDomain(current, cfg) }, null, 2)}\n`);
+  process.stdout.write(
+    `connected ${cfg.id} -> ${domainsFile}\nmounts on next 'vishu jarvis'${cfg.requireEnv ? ` (set ${cfg.requireEnv} first)` : ""}\n`,
+  );
+  return 0;
 }
 
 /** Outbound webhook channels declared in VISHU_WEBHOOKS (JSON: {"channel":"https://hook"}). */
@@ -671,6 +713,7 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(`${remove ? "untrusted" : "trusted"} ${dir}\n${next.length} trusted repo(s)\n`);
     return 0;
   }
+  if (cmd === "connect") return connectCmd(argv.slice(1));
   if (cmd === "mcp-serve") return mcpServe(argv.slice(1));
   if (cmd === "report") return report(argv[1]);
   if (cmd === "ledger") return ledger(argv[1]);
@@ -702,6 +745,7 @@ async function main(argv: string[]): Promise<number> {
       "  vishu eval [runner]          run the eval suite (baseline|effort|moa) + track quality over time",
       "  vishu eval swebench [--limit N] [--file f] [--out p]   SWE-bench Lite: write predictions.jsonl",
       "  vishu rpc <method> [json]    call a method on a running core",
+      "  vishu connect <name> [--list]  mount a downstream MCP (browser|github|composio|custom) into the gateway",
       "  vishu mcp-serve [--http [port]]  expose Vishu's tools as an MCP server (stdio, or HTTP :8848)",
       "",
     ].join("\n"),

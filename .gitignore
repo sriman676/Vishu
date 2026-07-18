@@ -28,3 +28,6 @@ core.token
 # OS
 .DS_Store
 Thumbs.db
+
+# Playwright MCP runtime profile/trace output
+.playwright-mcp/
