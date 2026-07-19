@@ -31,3 +31,4 @@ Thumbs.db
 
 # Playwright MCP runtime profile/trace output
 .playwright-mcp/
+nim-models.json

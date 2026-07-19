@@ -9,7 +9,8 @@ import { buildApp } from "../appbuilder/build.js";
 import { formatFindings } from "../appbuilder/security.js";
 import { type AppSpec, type InterviewTurn, interviewStep, persistSpec, specToMarkdown } from "../appbuilder/spec.js";
 import { AgentService } from "../agent/service.js";
-import { loadConfig, providerPresets, resolveBuilderModel } from "../config/config.js";
+import { loadConfig, nimStateFile, providerPresets, resolveBuilderModel } from "../config/config.js";
+import { loadNimState, refreshNimModels } from "../providers/nimrefresh.js";
 import { ok as okRpc } from "../transport/rpc.js";
 import { registerAutomation, registerAutofix } from "../automation/rpc.js";
 import { SchedulerGate } from "../automation/gate.js";
@@ -165,6 +166,20 @@ function connectCmd(argv: string[]): number {
   return 0;
 }
 
+/** `vishu models refresh` — probe the live NIM catalogue, keep only models that actually answer, rank by
+ * params, and persist the best-available builder + fallback chain (read by config at next start). Wire it
+ * to a weekly trigger (or a Windows scheduled task) so the PA auto-promotes to the top model NIM serves. */
+async function modelsCmd(argv: string[]): Promise<number> {
+  const key = process.env.NVIDIA_API_KEY || (process.env.VISHU_API_KEY?.startsWith("nvapi-") ? process.env.VISHU_API_KEY : "");
+  if (!key) return usageErr("vishu models refresh needs a NIM key (NVIDIA_API_KEY or VISHU_API_KEY = nvapi-…)");
+  if (argv[0] && argv[0] !== "refresh") return usageErr("vishu models refresh");
+  const file = nimStateFile();
+  process.stdout.write("probing NIM catalogue for the best available models…\n");
+  const s = await refreshNimModels(key, file);
+  process.stdout.write(`builder:   ${s.builder}\nfallbacks: ${s.fallbacks.join(", ")}\nwritten -> ${file}\n`);
+  return 0;
+}
+
 /** Outbound webhook channels declared in VISHU_WEBHOOKS (JSON: {"channel":"https://hook"}). */
 function parseWebhooks(env = process.env): Record<string, string> {
   if (!env.VISHU_WEBHOOKS) return {};
@@ -187,7 +202,26 @@ function usageLog(config: ReturnType<typeof loadConfig>): UsageLog {
   return new UsageLog(join(config.paths.workspaceDir, "usage.jsonl"));
 }
 
+/** Weekly best-available NIM auto-update: on boot, if the persisted chain is missing or >7 days old,
+ * re-probe the catalogue and pick the top models NIM actually serves. Staleness-gated (cheap when fresh),
+ * best-effort (a failed probe keeps the last good chain). The always-on host restart-loop makes "weekly"
+ * real without a separate scheduler. Runs before loadConfig so the fresh chain feeds this boot. */
+async function maybeRefreshNimWeekly(): Promise<void> {
+  const key = process.env.NVIDIA_API_KEY || (process.env.VISHU_API_KEY?.startsWith("nvapi-") ? process.env.VISHU_API_KEY : "");
+  if (!key) return;
+  const file = nimStateFile();
+  const st = loadNimState(file);
+  if (st && Date.now() - st.ts < 7 * 24 * 60 * 60 * 1000) return; // fresh enough
+  try {
+    const s = await refreshNimModels(key, file);
+    process.stdout.write(`[models] weekly NIM refresh → builder=${s.builder}\n`);
+  } catch {
+    /* best-effort — keep the last good chain */
+  }
+}
+
 async function serve(): Promise<number> {
+  await maybeRefreshNimWeekly();
   const config = loadConfig();
   initToken(config.paths.workspaceDir);
   mkdirSync(config.paths.actionDir, { recursive: true });
@@ -716,6 +750,7 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(`${remove ? "untrusted" : "trusted"} ${dir}\n${next.length} trusted repo(s)\n`);
     return 0;
   }
+  if (cmd === "models") return modelsCmd(argv.slice(1));
   if (cmd === "connect") return connectCmd(argv.slice(1));
   if (cmd === "mcp-serve") return mcpServe(argv.slice(1));
   if (cmd === "report") return report(argv[1]);

@@ -1,5 +1,12 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { loadNimState } from "../providers/nimrefresh.js";
 import { resolvePaths, type VishuPaths } from "./paths.js";
+
+/** Where the weekly best-available NIM chain is persisted (VISHU_NIM_STATE overrides). */
+export function nimStateFile(env: NodeJS.ProcessEnv = process.env): string {
+  return env.VISHU_NIM_STATE || join(process.cwd(), "nim-models.json");
+}
 
 export type ProviderType = "mock" | "openai" | "anthropic" | "ollama";
 
@@ -91,7 +98,8 @@ const NIM_FALLBACK_MODELS = [
 export function resolveBuilderModel(env: NodeJS.ProcessEnv, provider: ProviderConfig): string {
   if (env.JARVIS_BUILDER_MODEL) return env.JARVIS_BUILDER_MODEL;
   const isNim = /nvidia|nim/i.test(provider.baseUrl);
-  return isNim ? NIM_LARGE_MODEL : provider.model;
+  if (!isNim) return provider.model; // nothing to upgrade to
+  return loadNimState(nimStateFile(env))?.builder ?? NIM_LARGE_MODEL; // weekly best-available, else safe default
 }
 
 /** Friendly preset names (gemini, nvidia, xai, …) — surfaced to the UI's provider/model switcher. */
@@ -175,13 +183,15 @@ export function resolveProvider(
   const baseUrl = env.VISHU_BASE_URL || file.provider?.baseUrl || preset?.baseUrl || DEFAULT_BASE_URL[type];
   const envFallbacks = splitKeys(env.VISHU_MODEL_FALLBACKS);
   const isNim = /nvidia|nim/i.test(baseUrl);
+  // Precedence: explicit env CSV > weekly auto-updated chain > hardcoded verified default.
+  const nimChain = isNim ? loadNimState(nimStateFile(env))?.fallbacks ?? NIM_FALLBACK_MODELS : undefined;
   return {
     type,
     model: env.VISHU_MODEL || file.provider?.model || preset?.model || DEFAULT_MODEL[type],
     baseUrl,
     apiKeys,
     keyLabels,
-    modelFallbacks: envFallbacks.length ? envFallbacks : isNim ? NIM_FALLBACK_MODELS : undefined,
+    modelFallbacks: envFallbacks.length ? envFallbacks : nimChain,
   };
 }
 
