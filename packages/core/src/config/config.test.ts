@@ -106,7 +106,8 @@ test("extended providers: prefix + preset for xai, fireworks, perplexity, and en
 
 test("builder model: JARVIS_BUILDER_MODEL overrides; NIM default on NVIDIA; else provider's own model", () => {
   const nim = loadConfig({ VISHU_API_KEY: "nvapi-abc" } as NodeJS.ProcessEnv).provider;
-  assert.equal(resolveBuilderModel({} as NodeJS.ProcessEnv, nim), "meta/llama-3.1-405b-instruct"); // NIM default
+  assert.equal(resolveBuilderModel({} as NodeJS.ProcessEnv, nim), "meta/llama-3.1-70b-instruct"); // NIM default (verified-live)
+  assert.deepEqual(nim.modelFallbacks, ["meta/llama-3.1-70b-instruct", "nvidia/llama-3.3-nemotron-super-49b-v1", "meta/llama-3.1-8b-instruct"]); // reroute chain
   assert.equal(resolveBuilderModel({ JARVIS_BUILDER_MODEL: "qwen/qwen2.5-coder-32b-instruct" } as NodeJS.ProcessEnv, nim), "qwen/qwen2.5-coder-32b-instruct");
 
   const gem = loadConfig({ VISHU_API_KEY: "AIza-abc" } as NodeJS.ProcessEnv).provider; // non-NIM

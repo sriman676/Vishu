@@ -11,6 +11,12 @@ export function statusError(status: number, body: string): ProviderError {
   );
 }
 
+/** A model-level failure (the requested model is not found / retired) — worth retrying with a
+ * DIFFERENT model rather than another key. NIM returns 404 (unknown/ungranted model) or 410 (retired). */
+export function isModelUnavailable(e: unknown): boolean {
+  return e instanceof ProviderError && (e.status === 404 || e.status === 410);
+}
+
 /** A failure worth rotating to the next provider/key (vs. a fatal one we should surface). */
 export function isTransient(e: unknown): boolean {
   if (e instanceof ProviderError) return e.transient;

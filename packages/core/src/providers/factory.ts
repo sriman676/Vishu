@@ -54,7 +54,7 @@ export function buildRouter(cfg: ProviderConfig, usageLog?: UsageLog, cassette?:
   const endpoints = providerEndpoints(cfg, cfg.type);
   const local = localEndpoint();
   if (local) endpoints.push(local);
-  return new Router(endpoints, usageLog, cassette, keyMode(), tracer);
+  return new Router(endpoints, usageLog, cassette, keyMode(), tracer, cfg.modelFallbacks ?? []);
 }
 
 /** Multi-provider pool: span every named provider (each bound to its own model) plus an optional local LLM

@@ -1,7 +1,7 @@
 import type { Cassette } from "../replay/cassette.js";
 import type { Tracer } from "../reliability/trace.js";
 import type { UsageLog } from "../usage/log.js";
-import { isTransient } from "./transient.js";
+import { isModelUnavailable, isTransient } from "./transient.js";
 import type { ChatRequest, ChatResponse, OnDelta, Provider } from "./types.js";
 
 const estimate = (text: string): number => Math.ceil(text.length / 4);
@@ -27,8 +27,30 @@ export class Router {
     private readonly cassette?: Cassette,
     private readonly mode: KeyMode = "failover",
     private readonly tracer?: Tracer,
+    /** Reroute chain: when the requested model times out / 5xxs / is gone (404/410) on every key,
+     * retry the whole call with the next model here before giving up. Empty = no model reroute. */
+    private readonly modelFallbacks: string[] = [],
   ) {
     if (endpoints.length === 0) throw new Error("[router] no providers configured");
+  }
+
+  /** Try `req.model`, then each fallback model, moving on when a model is unavailable or all keys fail
+   * transiently for it. A fatal, model-independent error (400/401) surfaces immediately. */
+  private async overModels<T>(req: ChatRequest, exec: (r: ChatRequest) => Promise<T>): Promise<T> {
+    const models = [req.model, ...this.modelFallbacks.filter((m) => m && m !== req.model)];
+    let lastErr: unknown;
+    for (let i = 0; i < models.length; i++) {
+      const model = models[i]!;
+      try {
+        return await exec(model === req.model ? req : { ...req, model });
+      } catch (e) {
+        const rerouteable = isTransient(e) || isModelUnavailable(e);
+        if (!rerouteable || i === models.length - 1) throw e;
+        lastErr = e;
+        process.stderr.write(`[router] model ${model} unavailable, rerouting to ${models[i + 1]}: ${(e as Error).message}\n`);
+      }
+    }
+    throw lastErr ?? new Error("[router] no models configured");
   }
 
   /** The endpoint try-order for one call. failover keeps [0..]; balance/local rotate the start so
@@ -41,28 +63,32 @@ export class Router {
   }
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
-    const replayed = this.cassette?.get(req);
-    if (replayed) {
-      this.logUsage(req, replayed);
-      return replayed;
-    }
-    const res = await this.traced(req, (p) => p.chat(req));
-    this.cassette?.put(req, res);
-    this.logUsage(req, res);
-    return res;
+    return this.overModels(req, async (r) => {
+      const replayed = this.cassette?.get(r);
+      if (replayed) {
+        this.logUsage(r, replayed);
+        return replayed;
+      }
+      const res = await this.traced(r, (p) => p.chat(r));
+      this.cassette?.put(r, res);
+      this.logUsage(r, res);
+      return res;
+    });
   }
 
   async chatStream(req: ChatRequest, onDelta: OnDelta): Promise<ChatResponse> {
-    const replayed = this.cassette?.get(req);
-    if (replayed) {
-      onDelta(replayed.content); // replay still drives streaming consumers
-      this.logUsage(req, replayed);
-      return replayed;
-    }
-    const res = await this.traced(req, (p) => p.chatStream(req, onDelta));
-    this.cassette?.put(req, res);
-    this.logUsage(req, res);
-    return res;
+    return this.overModels(req, async (r) => {
+      const replayed = this.cassette?.get(r);
+      if (replayed) {
+        onDelta(replayed.content); // replay still drives streaming consumers
+        this.logUsage(r, replayed);
+        return replayed;
+      }
+      const res = await this.traced(r, (p) => p.chatStream(r, onDelta));
+      this.cassette?.put(r, res);
+      this.logUsage(r, res);
+      return res;
+    });
   }
 
   /** run() wrapped in a `router.chat` span (categorised by request category) when a tracer is wired. */

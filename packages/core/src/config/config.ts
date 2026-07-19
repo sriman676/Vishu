@@ -11,6 +11,8 @@ export interface ProviderConfig {
   apiKeys: string[];
   /** Parallel to apiKeys: a human label per key (failover order = array order). */
   keyLabels: string[];
+  /** Reroute chain: models to retry (in order) when `model` times out / 5xxs / is gone. Router-level. */
+  modelFallbacks?: string[];
 }
 
 /** A file-config key may be a bare string or `{ key, label }` to name it explicitly. */
@@ -68,10 +70,19 @@ const PRESETS: Record<string, { type: ProviderType; baseUrl: string; model: stri
   intel: { type: "openai", baseUrl: "http://127.0.0.1:11434/v1", model: "qwen3:8b" },
 };
 
-/** Largest generally-available NVIDIA NIM model — the default "expert"/builder brain (decision
- * 2026-07-10: Anthropic keys are dead, so expert work runs on the biggest NIM model). Override with
- * JARVIS_BUILDER_MODEL for a coder-tuned or smaller NIM model. */
-const NIM_LARGE_MODEL = "meta/llama-3.1-405b-instruct";
+/** Largest NVIDIA NIM model that is actually GRANTED + responsive on this account — the default
+ * "expert"/builder brain (decision 2026-07-10: Anthropic keys are dead, so expert work runs on NIM).
+ * Verified live 2026-07-19: 405b/3.3-70b/nemotron-70b are 404/timeout on this key; 3.1-70b answers.
+ * Override with JARVIS_BUILDER_MODEL. When it does fail, the Router reroutes down NIM_FALLBACK_MODELS. */
+const NIM_LARGE_MODEL = "meta/llama-3.1-70b-instruct";
+
+/** Model reroute chain for NIM (verified responsive 2026-07-19). The Router walks this in order when the
+ * requested model times out / 5xxs / is gone (404/410). Env override: VISHU_MODEL_FALLBACKS (CSV). */
+const NIM_FALLBACK_MODELS = [
+  "meta/llama-3.1-70b-instruct",
+  "nvidia/llama-3.3-nemotron-super-49b-v1",
+  "meta/llama-3.1-8b-instruct",
+];
 
 /** Which model the "builder"/expert role runs. JARVIS_BUILDER_MODEL always wins; else, when the default
  * provider is NVIDIA NIM, the largest NIM model; else the provider's own model (nothing to upgrade to).
@@ -161,12 +172,16 @@ export function resolveProvider(
     keyLabels.push((typeof e === "string" ? undefined : e.label) || defaultLabel(i));
   });
 
+  const baseUrl = env.VISHU_BASE_URL || file.provider?.baseUrl || preset?.baseUrl || DEFAULT_BASE_URL[type];
+  const envFallbacks = splitKeys(env.VISHU_MODEL_FALLBACKS);
+  const isNim = /nvidia|nim/i.test(baseUrl);
   return {
     type,
     model: env.VISHU_MODEL || file.provider?.model || preset?.model || DEFAULT_MODEL[type],
-    baseUrl: env.VISHU_BASE_URL || file.provider?.baseUrl || preset?.baseUrl || DEFAULT_BASE_URL[type],
+    baseUrl,
     apiKeys,
     keyLabels,
+    modelFallbacks: envFallbacks.length ? envFallbacks : isNim ? NIM_FALLBACK_MODELS : undefined,
   };
 }
 
