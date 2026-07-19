@@ -70,6 +70,19 @@
         "@modelcontextprotocol/server-filesystem",
         "D:\\Job Project"
       ]
+    },
+    {
+      "id": "firecrawl",
+      "cmd": "npx",
+      "args": [
+        "-y",
+        "firecrawl-mcp"
+      ],
+      "requireEnv": "FIRECRAWL_API_KEY",
+      "reconnect": false,
+      "egressHosts": [
+        "api.firecrawl.dev"
+      ]
     }
   ]
 }

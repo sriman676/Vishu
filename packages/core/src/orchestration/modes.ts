@@ -125,6 +125,11 @@ export class ModeManager {
     return { activated: true };
   }
 
+  /** Brain⇄builder auto-route: classify a message and switch 100% into that lane's mode. */
+  route(message: string): void {
+    routeAndActivate(this, message);
+  }
+
   /** Draft a new mode from a described need (inert until registered). */
   propose(name: string, need: string): Mode {
     return proposeMode(name, need);

@@ -66,6 +66,16 @@ export const KNOWN_MCP: Record<string, DomainConfig> = {
     reconnect: false,
     egressHosts: ["mcp.composio.dev", "backend.composio.dev", "api.composio.dev"],
   },
+  // Firecrawl web scraping/crawl MCP. Inert until FIRECRAWL_API_KEY is set (cloud API) — a gated-off
+  // stub, same discipline as composio/github. Scrape/crawl tools read; nothing outward.
+  firecrawl: {
+    id: "firecrawl",
+    cmd: "npx",
+    args: ["-y", "firecrawl-mcp"],
+    requireEnv: "FIRECRAWL_API_KEY",
+    reconnect: false,
+    egressHosts: ["api.firecrawl.dev"],
+  },
 };
 
 /** Replace an existing domain with the same id (idempotent connect) or append it. Pure — used by the
