@@ -78,6 +78,17 @@ export const KNOWN_MCP: Record<string, DomainConfig> = {
   },
 };
 
+export type ConnectVia = "known" | "composio";
+/** Resolve a bare app name to a mountable domain — this is what makes "connect <app>" work for ANY name.
+ * A curated MCP (browser/github/composio/firecrawl) mounts itself; anything else routes through the
+ * universal Composio mount (1000+ apps behind one key + one process — no per-app npx package to download,
+ * so no spawn lag). `vishu connect <id> --cmd …` (handled by the caller) still mounts any custom MCP. */
+export function resolveConnect(name: string): { cfg: DomainConfig; via: ConnectVia } {
+  const known = KNOWN_MCP[name];
+  if (known) return { cfg: { ...known }, via: "known" };
+  return { cfg: { ...KNOWN_MCP.composio! }, via: "composio" }; // composio is a literal in KNOWN_MCP — always defined
+}
+
 /** Replace an existing domain with the same id (idempotent connect) or append it. Pure — used by the
  * `vishu connect` command to edit jarvis.domains.json without duplicating entries. */
 export function upsertDomain(list: DomainConfig[], cfg: DomainConfig): DomainConfig[] {

@@ -21,7 +21,7 @@ import { WorkflowStore } from "../automation/workflows.js";
 import { registerConnectors } from "../connectors/rpc.js";
 import { LocalConnector } from "../connectors/local.js";
 import { McpClient, type McpSampler, registerMcpTools } from "../connectors/mcp.js";
-import { DomainManager, KNOWN_MCP, type DomainConfig, loadDomains, upsertDomain } from "../connectors/domains.js";
+import { DomainManager, KNOWN_MCP, type DomainConfig, loadDomains, resolveConnect, upsertDomain } from "../connectors/domains.js";
 import { WebhookConnector } from "../connectors/webhook.js";
 import { StubMailConnector } from "../connectors/daily.js";
 import { GmailConnector } from "../connectors/gmail.js";
@@ -137,14 +137,14 @@ function connectCmd(argv: string[]): number {
     return i >= 0 ? argv[i + 1] : undefined;
   };
   const cmdOv = flag("--cmd");
+  // Dynamic resolve: curated name → its MCP; --cmd → any custom MCP; anything else → the universal
+  // Composio mount (1000+ apps, one key, no per-app package/lag) instead of erroring. "Say an app, it connects."
+  const composioFallback = !KNOWN_MCP[name] && !cmdOv;
   let cfg: DomainConfig;
-  if (KNOWN_MCP[name]) cfg = { ...KNOWN_MCP[name] };
-  else if (cmdOv) cfg = { id: name, cmd: cmdOv };
-  else
-    return usageErr(
-      `unknown service "${name}". known: ${Object.keys(KNOWN_MCP).join(", ")}. custom: vishu connect <id> --cmd <cmd> [--args <json-array>] [--cwd <dir>]`,
-    );
-  if (cmdOv) cfg.cmd = cmdOv;
+  if (cmdOv) {
+    const known = KNOWN_MCP[name];
+    cfg = known ? { ...known, cmd: cmdOv } : { id: name, cmd: cmdOv };
+  } else cfg = resolveConnect(name).cfg;
   const argsOv = flag("--args");
   if (argsOv) {
     try {
@@ -156,8 +156,11 @@ function connectCmd(argv: string[]): number {
   const cwdOv = flag("--cwd");
   if (cwdOv) cfg.cwd = resolve(cwdOv);
   writeFileSync(domainsFile, `${JSON.stringify({ domains: upsertDomain(current, cfg) }, null, 2)}\n`);
+  const note = composioFallback
+    ? `\n"${name}" routes through Composio — set COMPOSIO_API_KEY and authorize ${name} there; its tools appear as composio__*.`
+    : "";
   process.stdout.write(
-    `connected ${cfg.id} -> ${domainsFile}\nmounts on next 'vishu jarvis'${cfg.requireEnv ? ` (set ${cfg.requireEnv} first)` : ""}\n`,
+    `connected ${cfg.id} -> ${domainsFile}\nmounts on next 'vishu jarvis'${cfg.requireEnv ? ` (set ${cfg.requireEnv} first)` : ""}${note}\n`,
   );
   return 0;
 }
