@@ -55,6 +55,9 @@ import { makeRunners } from "../eval/runners.js";
 import { BUILTIN_SUITE } from "../eval/suite.js";
 import { loadSweBenchLite, runSweBench } from "../eval/swebench.js";
 import { buildPoolRouter, buildRouter } from "../providers/factory.js";
+import { AnthropicProvider } from "../providers/anthropic.js";
+import { OpenAICompatibleProvider } from "../providers/openai.js";
+import { ProviderError } from "../providers/types.js";
 import { RunLog } from "../reliability/runlog.js";
 import { makeAsk, terminalPrompt } from "../reliability/ask.js";
 import { AuditLog } from "../security/audit.js";
@@ -181,21 +184,24 @@ async function modelsCmd(argv: string[]): Promise<number> {
   return 0;
 }
 
-/** Liveness probe for one discovered provider. 200 on its models endpoint = alive; 401/403 = bad/expired
- * key = dead; anything else (404 shape mismatch, timeout) = unknown (don't condemn). Local = skipped. */
+/** True liveness probe: a real 1-token chat with the provider's CONFIGURED model — the only test that
+ * reflects what PA actually calls (a valid key whose default model 404s, or an unfunded 402 account, is
+ * useless to PA and reads dead). Returns true = answered; false = definitively unusable (401/402/404/400);
+ * undefined = inconclusive (429/5xx transient, or local) → left in the pool. A /models check can't see
+ * credit/model-access, so it wrongly passed unfunded and wrong-model keys — this doesn't. */
 async function probeProvider(cfg: DiscoveredProvider["cfg"]): Promise<boolean | undefined> {
   if (cfg.type === "ollama") return undefined; // on-device; assumed up, no network probe
-  const key = cfg.apiKeys[0];
-  if (!key) return undefined;
-  const url = cfg.type === "anthropic" ? `${cfg.baseUrl}/v1/models` : `${cfg.baseUrl}/models`;
-  const headers = cfg.type === "anthropic" ? { "x-api-key": key, "anthropic-version": "2023-06-01" } : { authorization: `Bearer ${key}` };
+  const apiKey = cfg.apiKeys[0];
+  if (!apiKey) return undefined;
+  const prov =
+    cfg.type === "anthropic"
+      ? new AnthropicProvider({ name: "probe", baseUrl: cfg.baseUrl, apiKey })
+      : new OpenAICompatibleProvider({ name: "probe", baseUrl: cfg.baseUrl, apiKey });
   try {
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) });
-    if (res.ok) return true;
-    if (res.status === 401 || res.status === 403) return false; // key rejected
-    return undefined; // other status → inconclusive, leave it in the pool
-  } catch {
-    return false; // network error / timeout → treat as down
+    await prov.chat({ model: cfg.model, messages: [{ role: "user", content: "hi" }], maxTokens: 1, category: "probe" });
+    return true;
+  } catch (e) {
+    return e instanceof ProviderError && e.transient ? undefined : false; // transient → keep; else dead
   }
 }
 
