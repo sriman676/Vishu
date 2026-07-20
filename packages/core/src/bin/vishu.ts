@@ -740,6 +740,14 @@ async function main(argv: string[]): Promise<number> {
   } catch {
     /* no .env file — fall back to the ambient environment */
   }
+  // Then fold in the shared workspace .env one level up (D:\Job Project\.env) — the single source of truth
+  // for all provider keys the key assigner discovers. loadEnvFile does NOT overwrite already-set vars, so
+  // the local .env above still wins; this only fills gaps. Missing → ignored (local/ambient env is enough).
+  try {
+    process.loadEnvFile(join(process.cwd(), "..", ".env"));
+  } catch {
+    /* no shared root .env — local/ambient env is enough */
+  }
   const cmd = argv[0];
 
   if (cmd === "--version" || cmd === "-v") {

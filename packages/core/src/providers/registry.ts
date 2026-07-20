@@ -117,17 +117,18 @@ export function toPool(list: DiscoveredProvider[]): Record<string, ProviderConfi
   return pool;
 }
 
-/** Discovered list → role→provider assignments (the per-task tier routing). Hard roles (brain/builder/
- * judge/main) → best premium (else best available); the cheap fast-lane roles → best cheap (else local);
- * embedder → local when present. Unassigned roles fall back to the pooled default Router. */
+/** Discovered list → role→provider assignments (the per-task tier routing). Only the cheap, high-frequency
+ * fast-lane roles get pinned — to the best cheap provider (embedder → local when present) — so classify/
+ * summarise/route work stays off the premium quota. Hard roles (brain/builder/judge/main) are LEFT
+ * UNASSIGNED on purpose: they fall through to the pooled default Router, which spans every provider
+ * best-first with failover — so hard reasoning prefers premium yet self-heals when a top provider is down,
+ * and the existing builder-model logic (resolveBuilderModel / big-NIM) keeps working untouched. */
 export function assignRoles(list: DiscoveredProvider[]): Record<string, string> {
   const roles: Record<string, string> = {};
   const inTier = (t: Tier) => list.filter((p) => p.tier === t); // already rank-sorted
-  const topPremium = inTier("premium")[0]?.name ?? inTier("cheap")[0]?.name ?? list[0]?.name;
-  const topCheap = inTier("cheap")[0]?.name ?? inTier("local")[0]?.name ?? list[0]?.name;
+  const topCheap = inTier("cheap")[0]?.name ?? inTier("local")[0]?.name;
   const topLocal = inTier("local")[0]?.name ?? topCheap;
 
-  if (topPremium) for (const r of ["main", "brain", "builder", "judge"]) roles[r] = topPremium;
   if (topCheap) for (const r of ["fast", "worker", "summariser", "classifier"]) roles[r] = topCheap;
   if (topLocal) roles.embedder = topLocal;
   return roles;

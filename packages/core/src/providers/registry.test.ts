@@ -47,18 +47,19 @@ test("local endpoint joins as its own tier when configured", () => {
   assert.equal(local.cfg.type, "ollama");
 });
 
-test("assignRoles: hard roles → best premium, fast roles → best cheap", () => {
+test("assignRoles: fast-lane roles → best cheap; hard roles left to the pool", () => {
   const list = discoverProviders(env({ MINIMAX_API_KEY: "mm", GROQ_API_KEY: "gsk" }));
   const roles = assignRoles(list);
-  assert.equal(roles.brain, "minimax");
-  assert.equal(roles.builder, "minimax");
   assert.equal(roles.fast, "groq");
   assert.equal(roles.classifier, "groq");
+  // brain/builder/main/judge are intentionally unassigned → they use the pooled failover Router.
+  assert.equal(roles.brain, undefined);
+  assert.equal(roles.builder, undefined);
 });
 
-test("assignRoles: with no premium, hard roles fall back to best cheap", () => {
-  const roles = assignRoles(discoverProviders(env({ GROQ_API_KEY: "gsk" })));
-  assert.equal(roles.brain, "groq");
+test("assignRoles: embedder prefers local when a local endpoint exists", () => {
+  const roles = assignRoles(discoverProviders(env({ GROQ_API_KEY: "gsk", VISHU_LOCAL_BASE_URL: "http://127.0.0.1:11434" })));
+  assert.equal(roles.embedder, "local");
   assert.equal(roles.fast, "groq");
 });
 
