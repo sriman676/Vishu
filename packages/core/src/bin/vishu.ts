@@ -11,6 +11,7 @@ import { type AppSpec, type InterviewTurn, interviewStep, persistSpec, specToMar
 import { AgentService } from "../agent/service.js";
 import { loadConfig, nimStateFile, providerPresets, resolveBuilderModel } from "../config/config.js";
 import { loadNimState, refreshNimModels } from "../providers/nimrefresh.js";
+import { type DiscoveredProvider, discoverProviders, keysHealthFile } from "../providers/registry.js";
 import { ok as okRpc } from "../transport/rpc.js";
 import { registerAutomation, registerAutofix } from "../automation/rpc.js";
 import { SchedulerGate } from "../automation/gate.js";
@@ -177,6 +178,61 @@ async function modelsCmd(argv: string[]): Promise<number> {
   process.stdout.write("probing NIM catalogue for the best available models…\n");
   const s = await refreshNimModels(key, file);
   process.stdout.write(`builder:   ${s.builder}\nfallbacks: ${s.fallbacks.join(", ")}\nwritten -> ${file}\n`);
+  return 0;
+}
+
+/** Liveness probe for one discovered provider. 200 on its models endpoint = alive; 401/403 = bad/expired
+ * key = dead; anything else (404 shape mismatch, timeout) = unknown (don't condemn). Local = skipped. */
+async function probeProvider(cfg: DiscoveredProvider["cfg"]): Promise<boolean | undefined> {
+  if (cfg.type === "ollama") return undefined; // on-device; assumed up, no network probe
+  const key = cfg.apiKeys[0];
+  if (!key) return undefined;
+  const url = cfg.type === "anthropic" ? `${cfg.baseUrl}/v1/models` : `${cfg.baseUrl}/models`;
+  const headers = cfg.type === "anthropic" ? { "x-api-key": key, "anthropic-version": "2023-06-01" } : { authorization: `Bearer ${key}` };
+  try {
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) });
+    if (res.ok) return true;
+    if (res.status === 401 || res.status === 403) return false; // key rejected
+    return undefined; // other status → inconclusive, leave it in the pool
+  } catch {
+    return false; // network error / timeout → treat as down
+  }
+}
+
+/** `vishu keys` — show the assigner's pool: every provider key discovered in the env, its tier, model, key
+ * count, and which roles it's assigned. `vishu keys --probe` pings each and writes keys-health.json so dead
+ * keys drop out of routing. This is the visible surface of the deterministic key assigner. */
+async function keysCmd(argv: string[]): Promise<number> {
+  if (argv[0] && argv[0] !== "--probe") return usageErr("vishu keys [--probe]");
+  const config = loadConfig();
+  const list = discoverProviders();
+  if (!list.length) {
+    process.stdout.write("no provider keys found. add one to the workspace .env (e.g. MINIMAX_API_KEY=…) and PA will use it.\n");
+    return 0;
+  }
+  const rolesFor = (name: string) => Object.entries(config.roles).filter(([, p]) => p === name).map(([r]) => r);
+
+  if (argv[0] === "--probe") {
+    process.stdout.write("probing providers for liveness…\n");
+    const providers: Record<string, { ok: boolean; ts: string }> = {};
+    for (const p of list) {
+      const ok = await probeProvider(p.cfg);
+      process.stdout.write(`  ${p.name.padEnd(12)} ${ok === true ? "alive" : ok === false ? "DEAD" : "skip"}\n`);
+      if (ok !== undefined) providers[p.name] = { ok, ts: new Date().toISOString() };
+    }
+    const file = keysHealthFile();
+    writeFileSync(file, JSON.stringify({ providers }, null, 2));
+    process.stdout.write(`written -> ${file}\n`);
+    return 0;
+  }
+
+  process.stdout.write(`${list.length} provider(s) available, best-first:\n`);
+  for (const p of list) {
+    const roles = rolesFor(p.name);
+    const keys = `${p.keyCount} key${p.keyCount === 1 ? "" : "s"}`;
+    process.stdout.write(`  ${p.name.padEnd(12)} ${p.tier.padEnd(8)} ${keys.padEnd(7)} ${p.cfg.model}${roles.length ? `  → ${roles.join(", ")}` : ""}\n`);
+  }
+  process.stdout.write("run `vishu keys --probe` to health-check and drop dead keys from routing.\n");
   return 0;
 }
 
@@ -751,6 +807,7 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   if (cmd === "models") return modelsCmd(argv.slice(1));
+  if (cmd === "keys") return keysCmd(argv.slice(1));
   if (cmd === "connect") return connectCmd(argv.slice(1));
   if (cmd === "mcp-serve") return mcpServe(argv.slice(1));
   if (cmd === "report") return report(argv[1]);
@@ -785,6 +842,7 @@ async function main(argv: string[]): Promise<number> {
       "  vishu rpc <method> [json]    call a method on a running core",
       "  vishu connect <name> [--list]  mount a downstream MCP (browser|github|composio|custom) into the gateway",
       "  vishu mcp-serve [--http [port]]  expose Vishu's tools as an MCP server (stdio, or HTTP :8848)",
+      "  vishu keys [--probe]         show the discovered provider-key pool + tier routing (probe = liveness)",
       "",
     ].join("\n"),
   );
