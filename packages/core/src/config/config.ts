@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadNimState } from "../providers/nimrefresh.js";
+import { assignRoles, discoverProviders, toPool } from "../providers/registry.js";
 import { resolvePaths, type VishuPaths } from "./paths.js";
 
 /** Where the weekly best-available NIM chain is persisted (VISHU_NIM_STATE overrides). */
@@ -72,6 +73,10 @@ const PRESETS: Record<string, { type: ProviderType; baseUrl: string; model: stri
   xai: { type: "openai", baseUrl: "https://api.x.ai/v1", model: "grok-2-latest" },
   perplexity: { type: "openai", baseUrl: "https://api.perplexity.ai", model: "sonar" },
   cohere: { type: "openai", baseUrl: "https://api.cohere.ai/compatibility/v1", model: "command-r" },
+  minimax: { type: "openai", baseUrl: "https://api.minimax.io/v1", model: "MiniMax-M3" },
+  cerebras: { type: "openai", baseUrl: "https://api.cerebras.ai/v1", model: "llama-3.3-70b" },
+  sambanova: { type: "openai", baseUrl: "https://api.sambanova.ai/v1", model: "Meta-Llama-3.3-70B-Instruct" },
+  deepinfra: { type: "openai", baseUrl: "https://api.deepinfra.com/v1/openai", model: "meta-llama/Llama-3.3-70B-Instruct" },
   // Local Qwen3 on Intel Arc via IPEX-LLM's Ollama portable (OpenAI-compatible at :11434/v1). Offline,
   // credential-free — any VISHU_API_KEY value works (Ollama ignores it). See scripts/setup-intel-llm.ps1.
   intel: { type: "openai", baseUrl: "http://127.0.0.1:11434/v1", model: "qwen3:8b" },
@@ -107,6 +112,21 @@ export function providerPresets(): { name: string; model: string }[] {
   return Object.entries(PRESETS).map(([name, p]) => ({ name, model: p.model }));
 }
 
+/** Resolve a provider name → its adapter type + endpoint + default model. Preset names (gemini/nvidia/…)
+ * carry their own; a bare adapter type (anthropic/openai/ollama) falls back to the type defaults. Used by
+ * the key registry to build a pool entry per discovered key without re-declaring endpoints. */
+export function providerBaseConfig(name: string): { type: ProviderType; baseUrl: string; model: string } {
+  const p = PRESETS[name];
+  if (p) return { type: p.type, baseUrl: p.baseUrl, model: p.model };
+  const type = (["mock", "openai", "anthropic", "ollama"].includes(name) ? name : "openai") as ProviderType;
+  return { type, baseUrl: DEFAULT_BASE_URL[type], model: DEFAULT_MODEL[type] };
+}
+
+/** Provider → its canonical env-var name (first ENV_KEYS entry wins, e.g. gemini → GEMINI_API_KEY). */
+export function providerEnvVar(provider: string): string | undefined {
+  return ENV_KEYS.find((e) => e.provider === provider)?.env;
+}
+
 /** Identify a provider from an API key's prefix — lets auto-detect recognise a key pasted straight into
  * VISHU_API_KEY (not just provider-named env vars). Order matters: specific prefixes before the bare sk-. */
 function detectFromKey(key: string): string | undefined {
@@ -139,6 +159,10 @@ const ENV_KEYS: { provider: string; env: string }[] = [
   { provider: "xai", env: "XAI_API_KEY" },
   { provider: "perplexity", env: "PERPLEXITY_API_KEY" },
   { provider: "cohere", env: "COHERE_API_KEY" },
+  { provider: "minimax", env: "MINIMAX_API_KEY" },
+  { provider: "cerebras", env: "CEREBRAS_API_KEY" },
+  { provider: "sambanova", env: "SAMBANOVA_API_KEY" },
+  { provider: "deepinfra", env: "DEEPINFRA_API_KEY" },
 ];
 
 /** CSV or single value → trimmed list. Comma-separated = N keys for failover. */
@@ -235,10 +259,27 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): VishuConfig {
     throw new Error(`[config] invalid port: ${port}`);
   }
 
+  // Providers + roles: a config file (if it declares any) wins — the user pinned them by hand. Otherwise
+  // the KEY ASSIGNER auto-discovers every provider key present in the env and builds a ranked, tiered pool
+  // + per-task role assignments. This is what makes a newly-pasted key "just work": drop it in .env, and
+  // on next boot it joins the pool with no code change.
+  const fileHasPool = Object.keys(file.providers ?? {}).length > 0;
+  const discovered = fileHasPool ? [] : discoverProviders(env);
   const providers: Record<string, ProviderConfig> = {};
-  for (const [name, o] of Object.entries(file.providers ?? {})) providers[name] = providerFromObject(o);
+  if (fileHasPool) for (const [name, o] of Object.entries(file.providers!)) providers[name] = providerFromObject(o);
+  else Object.assign(providers, toPool(discovered));
+
+  // The default/fallback AI. An explicit pin (VISHU_PROVIDER / VISHU_API_KEY[S] / file.provider) always
+  // wins; otherwise the top-ranked discovered provider is the default so model/fallbackModel defaults track
+  // the best available AI (the pooled Router — not this single provider — drives dispatch when a pool exists).
+  // ponytail: the NIM per-model reroute chain is subsumed by cross-provider pool failover here.
+  const pinned = !!(env.VISHU_PROVIDER || env.VISHU_API_KEY || env.VISHU_API_KEYS || file.provider);
+  const top = discovered[0];
+  const provider = !pinned && top ? top.cfg : resolveProvider(env, file);
+
+  const roles = file.roles ?? (fileHasPool ? {} : assignRoles(discovered));
 
   const budgetUsd = env.VISHU_BUDGET_USD ? Number(env.VISHU_BUDGET_USD) : file.budgetUsd ?? 0;
 
-  return { paths, port, provider: resolveProvider(env, file), providers, roles: file.roles ?? {}, budgetUsd: budgetUsd > 0 ? budgetUsd : 0 };
+  return { paths, port, provider, providers, roles, budgetUsd: budgetUsd > 0 ? budgetUsd : 0 };
 }
