@@ -50,6 +50,8 @@ const CATALOG: { name: string; tier: Tier; rank: number; extraKeyEnvs?: string[]
   { name: "mistral", tier: "cheap", rank: 54 },
   { name: "openrouter", tier: "cheap", rank: 52 },
   { name: "cohere", tier: "cheap", rank: 50 },
+  { name: "huggingface", tier: "cheap", rank: 48 },
+  { name: "cloudflare", tier: "cheap", rank: 46 },
 ];
 
 /** CSV or single value → trimmed non-empty list (a provider env var may hold N comma-separated keys). */
@@ -103,6 +105,12 @@ export function discoverProviders(env: NodeJS.ProcessEnv = process.env): Discove
     }
     if (!apiKeys.length) continue; // no key present → provider unavailable
     const base = providerBaseConfig(entry.name);
+    // Cloudflare's endpoint embeds the account id; without it the URL can't resolve → skip the provider.
+    if (base.baseUrl.includes("{account_id}")) {
+      const acct = env.CLOUDFLARE_ACCOUNT_ID;
+      if (!acct) continue;
+      base.baseUrl = base.baseUrl.replace("{account_id}", acct);
+    }
     out.push({ name: entry.name, tier: entry.tier, rank: entry.rank, keyCount: apiKeys.length, cfg: { ...base, apiKeys, keyLabels } });
   }
 

@@ -80,6 +80,11 @@ const PRESETS: Record<string, { type: ProviderType; baseUrl: string; model: stri
   // Local Qwen3 on Intel Arc via IPEX-LLM's Ollama portable (OpenAI-compatible at :11434/v1). Offline,
   // credential-free — any VISHU_API_KEY value works (Ollama ignores it). See scripts/setup-intel-llm.ps1.
   intel: { type: "openai", baseUrl: "http://127.0.0.1:11434/v1", model: "qwen3:8b" },
+  // HuggingFace Inference-Providers router (OpenAI-compatible) — HF_TOKEN. Model must be a served id.
+  huggingface: { type: "openai", baseUrl: "https://router.huggingface.co/v1", model: "meta-llama/Llama-3.3-70B-Instruct" },
+  // Cloudflare Workers AI (OpenAI-compatible). {account_id} is interpolated from CLOUDFLARE_ACCOUNT_ID at
+  // discovery; without that env the provider is skipped (the URL can't resolve).
+  cloudflare: { type: "openai", baseUrl: "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1", model: "@cf/meta/llama-3.1-8b-instruct" },
 };
 
 /** Largest NVIDIA NIM model that is actually GRANTED + responsive on this account — the default
@@ -163,6 +168,9 @@ const ENV_KEYS: { provider: string; env: string }[] = [
   { provider: "cerebras", env: "CEREBRAS_API_KEY" },
   { provider: "sambanova", env: "SAMBANOVA_API_KEY" },
   { provider: "deepinfra", env: "DEEPINFRA_API_KEY" },
+  { provider: "huggingface", env: "HF_TOKEN" },
+  { provider: "huggingface", env: "HUGGINGFACE_API_KEY" },
+  { provider: "cloudflare", env: "CLOUDFLARE_API_TOKEN" },
 ];
 
 /** CSV or single value → trimmed list. Comma-separated = N keys for failover. */

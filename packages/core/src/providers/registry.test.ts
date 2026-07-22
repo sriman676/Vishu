@@ -72,3 +72,18 @@ test("a probe-marked-dead provider is dropped from discovery", () => {
   assert.ok(!names.includes("anthropic"), "dead provider dropped");
   assert.ok(names.includes("groq"), "live provider kept");
 });
+
+test("HuggingFace joins the pool via HF_TOKEN (OpenAI-compatible router)", () => {
+  const list = discoverProviders(env({ HF_TOKEN: "hf_x" }));
+  const hf = list.find((p) => p.name === "huggingface");
+  assert.ok(hf, "huggingface discovered from HF_TOKEN");
+  assert.match(hf!.cfg.baseUrl, /router\.huggingface\.co/);
+});
+
+test("Cloudflare needs an account id: skipped without it, interpolated with it", () => {
+  assert.equal(discoverProviders(env({ CLOUDFLARE_API_TOKEN: "cf_x" })).find((p) => p.name === "cloudflare"), undefined);
+  const cf = discoverProviders(env({ CLOUDFLARE_API_TOKEN: "cf_x", CLOUDFLARE_ACCOUNT_ID: "acct123" })).find((p) => p.name === "cloudflare");
+  assert.ok(cf, "cloudflare discovered once the account id is present");
+  assert.match(cf!.cfg.baseUrl, /accounts\/acct123\/ai\/v1/);
+  assert.doesNotMatch(cf!.cfg.baseUrl, /\{account_id\}/);
+});
