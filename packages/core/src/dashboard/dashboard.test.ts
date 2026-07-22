@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { test } from "node:test";
 import type { VishuPaths } from "../config/paths.js";
 import { activity, dataMap, snapshot } from "./dashboard.js";
@@ -20,6 +20,9 @@ function fixture(): VishuPaths {
   };
   mkdirSync(ws, { recursive: true });
   writeFileSync(paths.configFile, "{}");
+  // vault with a mode/folder partition: modes/interview/ holding one note
+  mkdirSync(join(paths.vaultDir, "modes", "interview"), { recursive: true });
+  writeFileSync(join(paths.vaultDir, "modes", "interview", "n.md"), "# note");
   // usage.jsonl: ts is a NUMBER; two calls (one cloud, one local-free)
   writeFileSync(
     join(ws, "usage.jsonl"),
@@ -40,15 +43,26 @@ function fixture(): VishuPaths {
 }
 
 test("dataMap lists known store nodes with holds + never a secret path", () => {
-  const nodes = dataMap(fixture());
+  const paths = fixture();
+  const domainsFile = join(paths.workspaceDir, "jarvis.domains.json");
+  writeFileSync(
+    domainsFile,
+    JSON.stringify({ domains: [{ id: "careerops", cmd: "python", cwd: paths.actionDir, requireEnv: "COMPOSIO_API_KEY" }] }),
+  );
+  const nodes = dataMap(paths, domainsFile);
   const labels = nodes.map((n) => n.label);
   assert.ok(labels.includes("Memory vault"));
   assert.ok(labels.includes("usage.jsonl"));
   assert.ok(nodes.every((n) => n.holds.length > 0));
-  // F11: nothing secret-looking is ever listed
-  assert.ok(nodes.every((n) => !/\.env|credential|secret|token|\.key$|cookies/i.test(n.path)));
+  // F11: no secret-looking PATH is ever listed
+  assert.ok(nodes.every((n) => !/\.env|credential|secret|(^|[._-])token|\.key$|cookies/i.test(basename(n.path))));
   // config exists → modified set; a not-yet-created store → exists:false, still listed
   assert.equal(nodes.find((n) => n.label === "Config")?.exists, true);
+  // vault mode/folder partition surfaced with its note count
+  assert.match(nodes.find((n) => n.label === "vault/modes/interview")?.holds ?? "", /1 note/);
+  // attached MCP domain surfaced; gate on env-var NAME (not value)
+  assert.ok(labels.includes("domain: careerops"));
+  assert.match(nodes.find((n) => n.label === "domain: careerops")?.holds ?? "", /gated on COMPOSIO_API_KEY/);
 });
 
 test("activity merges the three logs, newest first, normalizing number+ISO ts", () => {

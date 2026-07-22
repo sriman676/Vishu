@@ -1,6 +1,7 @@
-import { readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { VishuPaths } from "../config/paths.js";
+import { loadDomains } from "../connectors/domains.js";
 import { HARD_BLOCK } from "../modules/fileindex.js";
 import { costOf } from "../usage/report.js";
 
@@ -52,7 +53,45 @@ function node(label: string, path: string, holds: string): DataNode | null {
   return { label, path, exists, modified, holds };
 }
 
-export function dataMap(paths: VishuPaths): DataNode[] {
+const defaultDomainsFile = (): string =>
+  process.env.VISHU_DOMAINS_FILE || join(process.cwd(), "jarvis.domains.json");
+
+// Vault mode/folder partitions: one node per subfolder (e.g. modes/interview), with its direct note count.
+function vaultPartitions(vaultDir: string): DataNode[] {
+  const out: DataNode[] = [];
+  const walk = (rel: string) => {
+    let entries;
+    try {
+      entries = readdirSync(join(vaultDir, rel), { withFileTypes: true });
+    } catch {
+      return; // vault (or subdir) not created yet
+    }
+    if (rel) {
+      const notes = entries.filter((e) => e.isFile() && e.name.endsWith(".md")).length;
+      const n = node(`vault/${rel.replace(/\\/g, "/")}`, join(vaultDir, rel), `${notes} note${notes === 1 ? "" : "s"}`);
+      if (n) out.push(n);
+    }
+    for (const e of entries) if (e.isDirectory()) walk(rel ? join(rel, e.name) : e.name);
+  };
+  walk("");
+  return out;
+}
+
+// jarvis.domains.json + one node per attached MCP domain (env-var NAMES only, never values).
+function domainNodes(domainsFile: string): DataNode[] {
+  const domains = loadDomains(domainsFile);
+  const out: DataNode[] = [];
+  const file = node("jarvis.domains.json", domainsFile, `${domains.length} attached MCP domain${domains.length === 1 ? "" : "s"}`);
+  if (file) out.push(file);
+  for (const d of domains) {
+    const gated = d.requireEnv ? ` (gated on ${d.requireEnv})` : "";
+    const n = node(`domain: ${d.id}`, d.cwd || domainsFile, `MCP via ${d.cmd}${gated}`);
+    if (n) out.push(n);
+  }
+  return out;
+}
+
+export function dataMap(paths: VishuPaths, domainsFile = defaultDomainsFile()): DataNode[] {
   const nodes = [
     node("Memory vault", paths.vaultDir, "plaintext Obsidian memory (source of truth)"),
     node("Memory DB", paths.memoryDbFile, "SQLite recall index (rebuildable)"),
@@ -60,8 +99,8 @@ export function dataMap(paths: VishuPaths): DataNode[] {
     node("Skills", paths.skillsDir, "installed skills"),
     node("Projects", paths.actionDir, "agent-writable project workspace"),
     ...WORKSPACE_NODES.map(([rel, holds]) => node(rel, join(paths.workspaceDir, rel), holds)),
-  ];
-  return nodes.filter((n): n is DataNode => n !== null);
+  ].filter((n): n is DataNode => n !== null);
+  return [...nodes, ...vaultPartitions(paths.vaultDir), ...domainNodes(domainsFile)];
 }
 
 // ponytail: whole-file read + slice(-n), matching readUsage/readLedger. Add tail-seek if logs grow big.
@@ -110,6 +149,6 @@ export function activity(workspaceDir: string, n = 40): ActivityEvent[] {
   return ev.sort((a, b) => b.ts - a.ts).slice(0, n);
 }
 
-export function snapshot(paths: VishuPaths, n = 40): DashboardSnapshot {
-  return { dataMap: dataMap(paths), activity: activity(paths.workspaceDir, n) };
+export function snapshot(paths: VishuPaths, n = 40, domainsFile = defaultDomainsFile()): DashboardSnapshot {
+  return { dataMap: dataMap(paths, domainsFile), activity: activity(paths.workspaceDir, n) };
 }
