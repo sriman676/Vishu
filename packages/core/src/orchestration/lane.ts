@@ -35,6 +35,28 @@ function countHits(text: string, re: RegExp): number {
   return (text.match(g) ?? []).length;
 }
 
+export type Execution = "local" | "cloud";
+
+// Cloud signals: hard reasoning / coding / architecture / long-form — a small local model can't match these.
+const CLOUD_RE =
+  /\b(architect|design|implement|build|refactor|debug|algorithm|optimi[sz]e|prove|reason|complex|multi-?step|write code|program|deploy|benchmark|research report)\b/i;
+// Local signals: private + cheap + short — exactly the small model's lane (summarise/classify/extract/redact).
+const LOCAL_RE =
+  /\b(summari[sz]e|classify|categori[sz]e|extract|redact|translate|label|tag|tl;?dr|personal|private|my (?:email|mail|file|files|note|notes|resume|cv|calendar|message|messages))\b/i;
+
+/** Decide whether a task should run on the LOCAL small model (private/cheap/short) or in the CLOUD
+ * (hard reasoning/coding/long). Privacy-first: under JARVIS_PRIVACY_MODE=strict a personal/private signal
+ * forces local so personal data stays out of cloud prompts. Otherwise a keyword+length scorer; defaults to
+ * cloud when there's no local signal (capability-safe). ponytail: deterministic, no LLM tiebreak. */
+export function classifyExecution(task: string, env: NodeJS.ProcessEnv = process.env): Execution {
+  const t = task ?? "";
+  if (env.JARVIS_PRIVACY_MODE === "strict" && LOCAL_RE.test(t)) return "local";
+  const cloud = countHits(t, CLOUD_RE) + (t.length > 400 ? 1 : 0); // long tasks lean cloud
+  const local = countHits(t, LOCAL_RE);
+  if (cloud > local) return "cloud";
+  return local > 0 ? "local" : "cloud"; // no local signal → cloud (safer default capability)
+}
+
 /** Classify `text` and switch the ModeManager into that lane's mode. Returns the lane + mode chosen. */
 export function routeAndActivate(modes: ModeManager, text: string): { lane: Lane; mode: string; activated: boolean } {
   const lane = classifyLane(text);

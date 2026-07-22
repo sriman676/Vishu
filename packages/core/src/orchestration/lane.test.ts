@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { classifyLane, LANE_MODE, routeAndActivate } from "./lane.js";
+import { classifyExecution, classifyLane, LANE_MODE, routeAndActivate } from "./lane.js";
 import { ModeManager } from "./modes.js";
 
 test("engineering requests route to the builder lane", () => {
@@ -30,4 +30,19 @@ test("routeAndActivate flips the ModeManager into the lane's mode", () => {
   const r2 = routeAndActivate(modes, "read my email and remind me to reply");
   assert.equal(r2.lane, "brain");
   assert.equal(modes.active().name, "pa-master");
+});
+
+test("classifyExecution: private/cheap → local, hard reasoning → cloud", () => {
+  assert.equal(classifyExecution("summarize my email thread"), "local");
+  assert.equal(classifyExecution("classify these support tickets"), "local");
+  assert.equal(classifyExecution("architect a distributed rate limiter and implement it"), "cloud");
+  assert.equal(classifyExecution("write a haiku"), "cloud"); // no local signal → cloud default
+});
+
+test("classifyExecution: privacy-strict forces personal-data tasks local", () => {
+  const strict = { JARVIS_PRIVACY_MODE: "strict" } as NodeJS.ProcessEnv;
+  // this task is cloud-dominant by keywords (design+implement > 1 personal signal)…
+  assert.equal(classifyExecution("design and implement an analyzer for my email", {} as NodeJS.ProcessEnv), "cloud");
+  // …but under privacy-strict the personal-data signal forces it local, keeping the email off cloud prompts.
+  assert.equal(classifyExecution("design and implement an analyzer for my email", strict), "local");
 });
