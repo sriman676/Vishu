@@ -8,7 +8,7 @@ import { compressShellOutput } from "../tokenjuice/shellfilter.js";
 import { retrieveOriginal, stashOriginal } from "../tokenjuice/reversible.js";
 import { pauseTools } from "../automation/pause.js";
 import { ToolRegistry } from "./registry.js";
-import type { Tool } from "./types.js";
+import type { Tool, ToolContext } from "./types.js";
 
 const str = (v: unknown, name: string): string => {
   if (typeof v !== "string") throw new SecurityError(`${name} must be a string`);
@@ -141,6 +141,109 @@ const listDir: Tool = {
     return readdirSync(abs, { withFileTypes: true })
       .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
       .join("\n");
+  },
+};
+
+/** Minimal glob → RegExp: `**` spans directories, `*` matches within a segment, `?` one char. Anchored
+ * whole-path so "src/**\/*.test.ts" only matches those files. ponytail: no brace/extglob — add if needed. */
+function globToRegExp(pattern: string): RegExp {
+  let re = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i]!;
+    if (c === "*") {
+      if (pattern[i + 1] === "*") {
+        re += ".*"; // ** — across path separators
+        i++;
+        if (pattern[i + 1] === "/") i++; // swallow the slash after ** so "**/x" also matches "x"
+      } else re += "[^/]*";
+    } else if (c === "?") re += "[^/]";
+    else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${re}$`);
+}
+
+const glob: Tool = {
+  name: "glob",
+  description:
+    "Find files by NAME pattern under the action directory (e.g. 'src/**/*.ts', '**/*.test.ts'). Returns matching relative paths, capped at 500. Distinct from grep (content search) and file_search (semantic index).",
+  meta: { action: "read" },
+  parameters: {
+    type: "object",
+    properties: {
+      pattern: { type: "string", description: "a glob like 'src/**/*.ts' — ** spans dirs, * within a segment" },
+      path: { type: "string", description: "subdirectory to search (default the action dir root)" },
+    },
+    required: ["pattern"],
+  },
+  async run(args, ctx) {
+    const root = jailPath(ctx.policy, str(args.path ?? ".", "path"));
+    const re = globToRegExp(str(args.pattern, "pattern"));
+    const cap = 500;
+    const out: string[] = [];
+    const walk = (dir: string, rel: string): void => {
+      if (out.length >= cap) return;
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (out.length >= cap) return;
+        if (e.name === "node_modules" || e.name === ".git" || e.name === "dist") continue;
+        const relPath = rel ? `${rel}/${e.name}` : e.name;
+        if (e.isDirectory()) walk(join(dir, e.name), relPath);
+        else if (re.test(relPath)) out.push(relPath);
+      }
+    };
+    walk(root, "");
+    return out.length ? clip(out.sort().join("\n")) : "[glob] no matches";
+  },
+};
+
+const TODO_FILE = ".vishu-todo.json";
+interface TodoItem {
+  text: string;
+  done: boolean;
+}
+function readTodo(ctx: ToolContext): TodoItem[] {
+  try {
+    return JSON.parse(readFileSync(jailPath(ctx.policy, TODO_FILE), "utf8")) as TodoItem[];
+  } catch {
+    return [];
+  }
+}
+function renderTodo(items: TodoItem[]): string {
+  return items.length ? items.map((t, i) => `${i + 1}. [${t.done ? "x" : " "}] ${t.text}`).join("\n") : "(no todos)";
+}
+
+const todo: Tool = {
+  name: "todo",
+  description:
+    "Track a task checklist across turns (persisted in the action dir). action=list (default) shows it; add appends `text`; done marks item `index` (1-based) complete; clear empties it. Use to plan and track multi-step work.",
+  meta: { action: "write" }, // mutates a workspace file (add/done/clear); list is the harmless default
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["list", "add", "done", "clear"] },
+      text: { type: "string", description: "the item text (for add)" },
+      index: { type: "number", description: "1-based item number (for done)" },
+    },
+  },
+  async run(args, ctx) {
+    const action = String(args.action ?? "list");
+    const path = jailPath(ctx.policy, TODO_FILE);
+    let items = readTodo(ctx);
+    if (action === "add") {
+      items.push({ text: str(args.text, "text"), done: false });
+    } else if (action === "done") {
+      const i = Number(args.index) - 1;
+      if (!Number.isInteger(i) || i < 0 || i >= items.length) return `[todo] no item ${args.index}`;
+      items[i]!.done = true;
+    } else if (action === "clear") {
+      items = [];
+    } else if (action !== "list") {
+      return `[todo] unknown action "${action}"`;
+    }
+    if (action !== "list") {
+      assertWritable(ctx.policy, path);
+      writeFileSync(path, JSON.stringify(items));
+    }
+    return renderTodo(items);
   },
 };
 
@@ -281,6 +384,6 @@ const retrieveOriginalTool: Tool = {
 };
 
 export function registerBuiltins(registry: ToolRegistry): ToolRegistry {
-  [readFile, writeFile, editFile, grep, listDir, runShell, webFetch, webSearch, webCrawl, retrieveOriginalTool, ...pauseTools].forEach((t) => registry.register(t));
+  [readFile, writeFile, editFile, grep, glob, todo, listDir, runShell, webFetch, webSearch, webCrawl, retrieveOriginalTool, ...pauseTools].forEach((t) => registry.register(t));
   return registry;
 }

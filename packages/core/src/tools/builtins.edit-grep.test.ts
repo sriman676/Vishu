@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,4 +54,33 @@ test("grep name filter restricts files searched", async () => {
   const out = await reg.get("grep").run({ pattern: "target", glob: ".ts" }, ctx);
   assert.match(out, /keep\.ts/);
   assert.doesNotMatch(out, /skip\.md/);
+});
+
+test("glob matches by name pattern across dirs, skips node_modules", async () => {
+  const { dir, reg, ctx } = setup();
+  mkdirSync(join(dir, "src", "sub"), { recursive: true });
+  mkdirSync(join(dir, "node_modules"), { recursive: true });
+  writeFileSync(join(dir, "src", "a.ts"), "x");
+  writeFileSync(join(dir, "src", "sub", "b.test.ts"), "x");
+  writeFileSync(join(dir, "node_modules", "c.ts"), "x");
+  const ts = await reg.get("glob").run({ pattern: "src/**/*.ts" }, ctx);
+  assert.match(ts, /src\/a\.ts/);
+  assert.match(ts, /src\/sub\/b\.test\.ts/);
+  assert.doesNotMatch(ts, /node_modules/);
+  const tests = await reg.get("glob").run({ pattern: "**/*.test.ts" }, ctx);
+  assert.match(tests, /b\.test\.ts/);
+  assert.doesNotMatch(tests, /a\.ts/);
+  assert.match(await reg.get("glob").run({ pattern: "nothing/*.py" }, ctx), /no matches/);
+});
+
+test("todo: add, list, done, and clear round-trip persist across calls", async () => {
+  const { reg, ctx } = setup();
+  await reg.get("todo").run({ action: "add", text: "first task" }, ctx);
+  const listed = await reg.get("todo").run({ action: "add", text: "second task" }, ctx);
+  assert.match(listed, /1\. \[ \] first task/);
+  assert.match(listed, /2\. \[ \] second task/);
+  const done = await reg.get("todo").run({ action: "done", index: 1 }, ctx);
+  assert.match(done, /1\. \[x\] first task/);
+  assert.match(await reg.get("todo").run({ action: "done", index: 9 }, ctx), /no item 9/);
+  assert.match(await reg.get("todo").run({ action: "clear" }, ctx), /no todos/);
 });
