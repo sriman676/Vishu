@@ -11,7 +11,7 @@ import type { VishuModule } from "./registry.js";
  * pattern), no caller change. Roots come from VISHU_FILE_ROOTS (';'-separated) or default to cwd. */
 
 // F11 hard-block: never index a file whose name matches these — secrets must not enter any prompt.
-const HARD_BLOCK = /(^\.env)|(^\.git$)|credential|secret|(^|[._-])token|id_rsa|id_ed25519|\.pem$|\.key$|\.pfx$|\.p12$|cookies|\.crt$/i;
+export const HARD_BLOCK = /(^\.env)|(^\.git$)|credential|secret|(^|[._-])token|id_rsa|id_ed25519|\.pem$|\.key$|\.pfx$|\.p12$|cookies|\.crt$/i;
 // Noise dirs: skip wholesale (huge, uninteresting, or not the user's own content).
 const SKIP_DIR = /^(node_modules|\.git|\.venv|venv|__pycache__|dist|build|out|\.next|\.cache|target|AppData|Windows|Program Files.*|\$Recycle\.Bin|System Volume Information)$/i;
 const TEXT_EXT = new Set([".md", ".txt", ".ts", ".tsx", ".js", ".jsx", ".py", ".json", ".yaml", ".yml", ".html", ".css", ".csv", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".sh", ".ps1", ".sql", ".toml", ".ini"]);

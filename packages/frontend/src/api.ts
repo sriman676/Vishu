@@ -93,6 +93,27 @@ export interface TokenReport {
 export const tokenReport = (token: string, days = 7) =>
   rpc<TokenReport>(token, "vishu.token_report", { days });
 
+// §9 "visualize" — read-only data-map + activity feed. Poll to refresh (snapshot-on-poll v1).
+export interface DataNode {
+  label: string;
+  path: string;
+  exists: boolean;
+  modified: number | null;
+  holds: string;
+}
+export interface ActivityEvent {
+  ts: number;
+  source: "model" | "gate" | "memory";
+  text: string;
+}
+export interface DashboardSnapshot {
+  dataMap: DataNode[];
+  activity: ActivityEvent[];
+}
+
+export const dashboardSnapshot = (token: string, limit = 40) =>
+  rpc<DashboardSnapshot>(token, "vishu.dashboard_snapshot", { limit });
+
 /** Subscribe to the core's SSE bus (tool:sync, notifications). Returns an unsubscribe. */
 export function subscribeEvents(token: string, onEvent: (e: unknown) => void): () => void {
   const es = new EventSource(`/events?token=${encodeURIComponent(token)}`);
