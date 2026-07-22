@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -8,7 +8,7 @@ import { Router } from "../providers/router.js";
 import { makePolicy } from "../security/policy.js";
 import { registerBuiltins } from "../tools/builtins.js";
 import { ToolRegistry } from "../tools/registry.js";
-import { buildApp, chunkValidator, harden, specVerify } from "./build.js";
+import { buildApp, chunkValidator, harden, specVerify, writeBuildArtifacts } from "./build.js";
 import { maintainabilityGate } from "./gate.js";
 import { hasBlockers, scanDir } from "./security.js";
 import { interviewStep, specToMarkdown } from "./spec.js";
@@ -143,4 +143,11 @@ test("buildApp: spec → chunked build → clean security + gate → ok report",
   assert.equal(report.chunks[0]?.ok, true);
   assert.equal(hasBlockers(report.findings), false);
   assert.equal(report.gate.ok, true);
+
+  // the build promises a written ARCHITECTURE doc + PENTEST report beside the app — prove they land.
+  const { architecture, pentest } = writeBuildArtifacts(repoDir, report);
+  assert.match(readFileSync(architecture, "utf8"), /# Spec: mini/);
+  const pen = readFileSync(pentest, "utf8");
+  assert.match(pen, /# Pentest report: mini/);
+  assert.match(pen, /\*\*Verdict:\*\* PASS/);
 });

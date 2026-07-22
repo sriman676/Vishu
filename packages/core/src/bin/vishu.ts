@@ -5,7 +5,7 @@ import { createInterface } from "node:readline/promises";
 import { registerAgent, registerAgentQueue } from "../agent/rpc.js";
 import { AgentQueue } from "../agent/queue.js";
 import { SessionStore } from "../agent/session.js";
-import { buildApp } from "../appbuilder/build.js";
+import { buildApp, writeBuildArtifacts } from "../appbuilder/build.js";
 import { formatFindings } from "../appbuilder/security.js";
 import { type AppSpec, type InterviewTurn, interviewStep, persistSpec, specToMarkdown } from "../appbuilder/spec.js";
 import { AgentService } from "../agent/service.js";
@@ -593,6 +593,7 @@ async function build(goal: string): Promise<number> {
       spec,
     );
 
+    const artifacts = writeBuildArtifacts(config.paths.actionDir, report);
     process.stdout.write(
       [
         "",
@@ -600,6 +601,9 @@ async function build(goal: string): Promise<number> {
         `security: ${formatFindings(report.findings)}`,
         `gate: ${report.gate.ok ? "pass" : report.gate.issues.join("; ")}`,
         `owasp review (advisory): ${report.review || "none"}`,
+        `app + artifacts: ${config.paths.actionDir}`,
+        `  architecture: ${artifacts.architecture}`,
+        `  pentest report: ${artifacts.pentest}`,
         "",
       ].join("\n"),
     );

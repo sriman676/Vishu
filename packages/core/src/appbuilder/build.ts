@@ -1,3 +1,5 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Router } from "../providers/router.js";
 import type { RunLog } from "../reliability/runlog.js";
 import type { SecurityPolicy } from "../security/policy.js";
@@ -140,6 +142,32 @@ export async function harden(deps: BuildDeps, opts: BuildOptions = {}): Promise<
     findings = scanDir(deps.repoDir);
   }
   return { findings, remediations };
+}
+
+/** Render the security/gate outcome as a written pentest report (the "written PENTEST REPORT" the
+ * build promises). Findings are grouped by severity so a human reads block-level items first. */
+export function pentestReport(report: BuildReport): string {
+  const bySev = (sev: Finding["severity"]) => report.findings.filter((f) => f.severity === sev);
+  const list = (fs: Finding[]) => (fs.length ? formatFindings(fs) : "- (none)");
+  return [
+    `# Pentest report: ${report.spec.name}`,
+    `\n**Verdict:** ${hasBlockers(report.findings) ? "BLOCKED (unresolved block-severity findings)" : "PASS"}`,
+    `**Security remediation rounds:** ${report.remediations}`,
+    `**Maintainability gate:** ${report.gate.ok ? "pass" : report.gate.issues.join("; ")}`,
+    `\n## Blocking findings\n${list(bySev("block"))}`,
+    `\n## Warnings\n${list(bySev("warn"))}`,
+    `\n## OWASP Top-10 review (advisory)\n${report.review || "- (none)"}`,
+  ].join("\n");
+}
+
+/** Write the two build artifacts beside the built app so the design + security posture are durable
+ * files, not just a vault note + stdout: ARCHITECTURE.md (the spec) and PENTEST.md (the report). */
+export function writeBuildArtifacts(repoDir: string, report: BuildReport): { architecture: string; pentest: string } {
+  const architecture = join(repoDir, "ARCHITECTURE.md");
+  const pentest = join(repoDir, "PENTEST.md");
+  writeFileSync(architecture, `${specToMarkdown(report.spec)}\n`);
+  writeFileSync(pentest, `${pentestReport(report)}\n`);
+  return { architecture, pentest };
 }
 
 /** Phase 11 build: decompose the verified spec into chunks, build each as a coder subagent in an
