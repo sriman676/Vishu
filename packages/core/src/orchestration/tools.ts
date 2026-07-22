@@ -4,6 +4,7 @@ import { makeToolRunner, parseSpec, runDag } from "./dag.js";
 import { Coordinator } from "./coordinator.js";
 import { mergedDiffStat } from "./subagent.js";
 import type { AgentFactory } from "./factory.js";
+import type { ModeManager } from "./modes.js";
 import type { RoleRegistry } from "./roles.js";
 
 /** Expose orchestration as a tool so the main agent can fan a goal out to subagents. The coder
@@ -11,7 +12,7 @@ import type { RoleRegistry } from "./roles.js";
  * Branch building dispatches through the "builder" role, so a configured builder-AI is used when set.
  * When a `factory` is supplied, `create_agent` (gated) and `dispatch` (route+run one task) close the
  * Step 5 loop: a bespoke agent can be built at runtime and then routed to by name. */
-export function registerOrchestrationTools(registry: ToolRegistry, deps: { roles: RoleRegistry; model: string; factory?: AgentFactory }): void {
+export function registerOrchestrationTools(registry: ToolRegistry, deps: { roles: RoleRegistry; model: string; factory?: AgentFactory; modes?: ModeManager }): void {
   const coordinator = (ctx: ToolContext) =>
     new Coordinator({
       router: deps.roles.for("builder"),
@@ -20,6 +21,7 @@ export function registerOrchestrationTools(registry: ToolRegistry, deps: { roles
       parentRegistry: registry,
       repoDir: ctx.policy.actionDir,
       factory: deps.factory,
+      modes: deps.modes, // dispatch can route a persona request to a mode switch (Phase-4 mode arm)
       ask: ctx.ask, // a dispatched/orchestrated subagent can now request approval, not just deny
     });
 
@@ -134,7 +136,7 @@ export function registerOrchestrationTools(registry: ToolRegistry, deps: { roles
     // Routing/delegation is a write; the dispatched subagent gates its own side effects. Explicit so the
     // name heuristic (which reads "dispatch" as send) doesn't force a spurious prompt on every route.
     meta: { action: "write" },
-    description: "Route ONE task to the best executor — an approved bespoke agent (named in the task), a preset role, or a synthesized agent — and run it. A too-vague task returns a clarifying question.",
+    description: "Route ONE task to the best executor — an approved bespoke agent (named in the task), a preset role, a synthesized agent, or a persona-mode switch (e.g. \"interview me\" → interviewer mode) — and run it. A too-vague task returns a clarifying question.",
     parameters: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
     run: async (args, ctx) => coordinator(ctx).dispatchAndRun(String(args.task ?? "")),
   });

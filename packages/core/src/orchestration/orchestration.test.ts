@@ -15,6 +15,7 @@ import { ARCHETYPES, narrowRegistry, narrowTier, synthesizeArchetype } from "./a
 import { council, mixtureOfAgents } from "./council.js";
 import { Coordinator } from "./coordinator.js";
 import { AgentFactory } from "./factory.js";
+import { ModeManager } from "./modes.js";
 import { NoParentContextError, runSubagent } from "./subagent.js";
 
 test("council: members answer, judge picks the winner", async () => {
@@ -156,6 +157,34 @@ test("dispatch: a factory-approved agent named in the task is routed to, ahead o
 
   // dispatchAndRun on a too-vague task returns the clarifying question without executing anything.
   assert.match(await coordinator.dispatchAndRun("do it"), /too brief/);
+});
+
+test("dispatch: a persona request routes to a mode switch, not a subagent (Phase-4 mode arm)", async () => {
+  const modes = new ModeManager({ ask: async () => false });
+  const coordinator = new Coordinator({
+    router: new Router([new EchoProvider()]),
+    model: "mock",
+    parentPolicy: makePolicy("full", mkdtempSync(join(tmpdir(), "vishu-mode-"))),
+    parentRegistry: registerBuiltins(new ToolRegistry()),
+    repoDir: mkdtempSync(join(tmpdir(), "vishu-mode-")),
+    modes,
+  });
+
+  // explicit mode name mentioned → route to that mode
+  const named = coordinator.dispatch("switch to interviewer mode for system design");
+  assert.equal(named.kind, "mode");
+  assert.equal(named.kind === "mode" && named.mode, "interviewer");
+
+  // intent keyword ("teach me") → teacher mode, after preset rules so a clear build intent isn't hijacked
+  const intent = coordinator.dispatch("teach me how binary search works");
+  assert.equal(intent.kind === "mode" && intent.mode, "teacher");
+
+  // a clear build intent still routes to the coder preset even with modes present
+  assert.equal(coordinator.dispatch("implement a login form in the app").kind, "archetype");
+
+  // dispatchAndRun actually flips the active persona
+  assert.match(await coordinator.dispatchAndRun("interview me about databases"), /interviewer/);
+  assert.equal(modes.active().name, "interviewer");
 });
 
 test("orchestrated request fans out, prunes a failed branch, returns one result", async () => {

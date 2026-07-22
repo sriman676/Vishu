@@ -366,11 +366,12 @@ async function serve(): Promise<number> {
   // `ask`/`audit` gate. `create_agent` gates registration; approved agents persist in agents.json and
   // become routable by the `dispatch` tool (Phase 1 Step 5 loop closure).
   const factory = new AgentFactory(tools, skills, { ask, audit, storePath: join(config.paths.workspaceDir, "agents.json") });
-  registerOrchestrationTools(tools, { roles, model: config.provider.model, factory });
   // F12 personas/modes: one ModeManager sharing the runtime ask/audit gate. mode_propose gates NEW modes
   // (change_setting); approved ones persist to modes.json + hot-load. The active mode's prompt layers
-  // into the agent's system prompt (below), so a switch actually changes behaviour.
+  // into the agent's system prompt (below), so a switch actually changes behaviour. Built before the
+  // orchestration tools so `dispatch` can route a persona request to a mode switch (Phase-4 mode arm).
   const modes = new ModeManager({ ask, audit, storePath: join(config.paths.workspaceDir, "modes.json") });
+  registerOrchestrationTools(tools, { roles, model: config.provider.model, factory, modes });
   registerModeTools(tools, modes);
   registerModeRpc(registry, modes); // web UI persona switcher + per-mode voiceId (§8)
   // §8: scope agent memory write+recall to the active mode's folder (registered here — after `modes` exists).

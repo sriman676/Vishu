@@ -6,6 +6,7 @@ import type { ToolRegistry } from "../tools/registry.js";
 import { parallelMap } from "../util/parallel.js";
 import { ARCHETYPES, type Archetype, synthesizeArchetype } from "./archetypes.js";
 import type { AgentFactory } from "./factory.js";
+import type { ModeManager } from "./modes.js";
 import { commandValidator, harvestBranch, runSubagent, type ValidationResult } from "./subagent.js";
 
 type SubagentOutcome = Awaited<ReturnType<typeof runSubagent>>;
@@ -26,6 +27,9 @@ export interface CoordinatorDeps {
   /** Approved bespoke agents from the factory. When set, `dispatch` routes a task naming one of them to
    * that agent (Step 5 loop closure) — approved agents become runtime-routable, ahead of generic presets. */
   factory?: AgentFactory;
+  /** Persona modes. When set, `dispatch` can route a task that asks for a persona (an explicit mode name,
+   * or teach/interview intent) to a mode-switch instead of a subagent — closing the Phase-4 mode arm. */
+  modes?: ModeManager;
 }
 
 export interface CoordinatorOptions {
@@ -70,13 +74,21 @@ const PRESET_RULES: [RegExp, string][] = [
   [/\b(plan|design|outline|break down|steps)\b/, "planner"],
 ];
 
-/** The routing outcome for a single task: a preset/synthesized archetype to execute, or a clarifying
- * question when the task is too vague to act on. (A `mode` arm — interview/teacher/… personas — lands in
- * Phase 4 when orchestration/modes.ts exists; deferred here, not invented.) */
+/** The routing outcome for a single task: a preset/synthesized archetype to execute, a persona mode to
+ * switch the main agent into, or a clarifying question when the task is too vague to act on. */
 export type DispatchDecision =
   | { kind: "archetype"; archetype: Archetype }
   | { kind: "synthesized"; archetype: Archetype }
+  | { kind: "mode"; mode: string }
   | { kind: "clarify"; question: string };
+
+/** Keyword → mode: a task that reads as "teach me…" / "interview me…" wants a conversational persona, not
+ * a coder subagent. Only routes when the mode actually exists in the manager, and only after preset rules
+ * so a clear build/fix intent is never hijacked. */
+const MODE_INTENT_RULES: [RegExp, string][] = [
+  [/\b(interview me|mock interview|interviewer)\b/, "interviewer"],
+  [/\b(teach me|tutor me|explain to me|walk me through|help me learn)\b/, "teacher"],
+];
 
 /** Strip "1. ", "- ", "* " and blanks; the provider's free-text list → discrete hypotheses. */
 function parseHypotheses(text: string, max: number): string[] {
@@ -103,6 +115,9 @@ export class Coordinator {
       return { kind: "clarify", question: `"${task.trim()}" is too brief to route — tell me the goal and any target (file, repo, or topic).` };
     }
     const lower = task.toLowerCase();
+    // 0. An explicit persona request wins outright — "switch to interviewer mode" is deliberate intent.
+    const modeNamed = this.deps.modes?.list().find((m) => new RegExp(`\\b${m.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(lower));
+    if (modeNamed) return { kind: "mode", mode: modeNamed.name };
     const agents = this.deps.factory?.agents() ?? [];
     // 1. A bespoke agent NAMED in the task wins outright — deliberately-built beats keyword defaults.
     //    Name matched as a whole word (escaped, so any name is literal).
@@ -111,6 +126,12 @@ export class Coordinator {
     // 2. Generic intent → a preset role (coder/critic/researcher/planner).
     for (const [re, name] of PRESET_RULES) {
       if (re.test(lower)) return { kind: "archetype", archetype: ARCHETYPES[name]! };
+    }
+    // 2b. Conversational-persona intent (teach/interview) → a mode switch, only if that mode exists.
+    if (this.deps.modes) {
+      for (const [re, mode] of MODE_INTENT_RULES) {
+        if (re.test(lower) && this.deps.modes.list().some((m) => m.name === mode)) return { kind: "mode", mode };
+      }
     }
     // 3. Routing recall: a task that DESCRIBES an existing agent's job (≥2 shared significant words with
     //    the task it was built for) reuses that agent instead of synthesizing a new one. Runs only after
@@ -136,6 +157,11 @@ export class Coordinator {
   async dispatchAndRun(task: string): Promise<string> {
     const decision = this.dispatch(task);
     if (decision.kind === "clarify") return decision.question;
+    if (decision.kind === "mode") {
+      const res = this.deps.modes?.activate(decision.mode);
+      this.deps.runLog?.log("dispatch", `mode:${decision.mode} ← ${task}`);
+      return res?.activated ? `Switched to "${decision.mode}" mode.` : `Could not switch to "${decision.mode}" mode: ${res?.reason ?? "no mode manager"}.`;
+    }
     this.deps.runLog?.log("dispatch", `${decision.kind}:${decision.archetype.name} ← ${task}`);
     const outcome = await runSubagent({
       archetype: decision.archetype,
