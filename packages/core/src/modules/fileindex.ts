@@ -108,5 +108,30 @@ export const fileIndexModule: VishuModule = {
         }
       },
     });
+
+    tools.register({
+      name: "file_context",
+      meta: { action: "read" },
+      description:
+        "RAG-quote your own files: retrieve the top matching passages (wider excerpts than file_search) as grounded context to QUOTE from, each labelled with its source path. Answer the user strictly from these excerpts and cite the path; this keeps private files on the local model instead of guessing.",
+      parameters: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] },
+      run: async (a) => retrieveContext(db, String(a.query ?? ""), Math.min(Number(a.limit ?? 4), 12)),
+    });
   },
 };
+
+/** Retrieve the top-k wider passages for a query, formatted as quotable, path-labelled context — the
+ * grounding the (local) model answers from. Pure over the db so it's unit-testable without a live model. */
+export function retrieveContext(db: DatabaseSync, query: string, limit = 4): string {
+  const q = ftsQuery(query);
+  if (!q) return "error: empty query";
+  try {
+    const rows = db
+      .prepare("SELECT path, snippet(files_fts, 1, '', '', ' … ', 64) AS excerpt FROM files_fts WHERE files_fts MATCH ? ORDER BY bm25(files_fts) LIMIT ?")
+      .all(q, limit) as { path: string; excerpt: string }[];
+    if (!rows.length) return "no matches — nothing in your indexed files covers that.";
+    return rows.map((r, i) => `[${i + 1}] ${r.path}\n${r.excerpt.trim()}`).join("\n\n");
+  } catch (e) {
+    return `error: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
