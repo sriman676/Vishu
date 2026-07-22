@@ -24,6 +24,7 @@ import { registerConnectors } from "../connectors/rpc.js";
 import { LocalConnector } from "../connectors/local.js";
 import { McpClient, type McpSampler, registerMcpTools } from "../connectors/mcp.js";
 import { DomainManager, KNOWN_MCP, type DomainConfig, loadDomains, resolveConnect, upsertDomain } from "../connectors/domains.js";
+import { loadRepoAdapters, registerAdapterTools, toDomainConfigs } from "../connectors/repoadapter.js";
 import { WebhookConnector } from "../connectors/webhook.js";
 import { StubMailConnector } from "../connectors/daily.js";
 import { GmailConnector } from "../connectors/gmail.js";
@@ -483,8 +484,14 @@ async function serve(): Promise<number> {
   // Phase 1 Step 3: attach external domain services (JobAutomation, …) from jarvis.domains.json as
   // namespaced `<id>__*` tool sets, each domain's declared action classes reaching the F0 gate.
   const domainsFile = process.env.VISHU_DOMAINS_FILE || join(process.cwd(), "jarvis.domains.json");
-  const domainTools = await new DomainManager(loadDomains(domainsFile), tools, { bus, sampler }).start();
-  if (domainTools.length) process.stdout.write(`[domains] ${domainTools.length} tool(s): ${domainTools.join(", ")}\n`);
+  // Phase 2.3 F2: also discover per-repo adapters under integrations/<name>/jarvis-adapter.json. MCP-kind
+  // adapters merge into the DomainManager (same mount path); CLI/data-kind register as namespaced tools.
+  const integrationsDir = process.env.VISHU_INTEGRATIONS_DIR || join(process.cwd(), "..", "integrations");
+  const adapters = loadRepoAdapters(integrationsDir);
+  const domainTools = await new DomainManager([...loadDomains(domainsFile), ...toDomainConfigs(adapters)], tools, { bus, sampler }).start();
+  const adapterTools = registerAdapterTools(tools, adapters);
+  const attached = [...domainTools, ...adapterTools];
+  if (attached.length) process.stdout.write(`[domains] ${attached.length} tool(s): ${attached.join(", ")}\n`);
 
   // Phase 12: optional modules — off by default, enabled by VISHU_MODULES; core is unaffected when off.
   const modulesOn = await loadModules(MODULES, { tools, rpc: registry, bus, workspaceDir: config.paths.workspaceDir });
