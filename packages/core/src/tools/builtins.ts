@@ -1,5 +1,5 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { assertWritable, decideCommand, decideEgress, jailPath, SecurityError } from "../security/policy.js";
 import { AuditLog } from "../security/audit.js";
 import { guardInjection } from "../security/injection.js";
@@ -41,6 +41,93 @@ const writeFile: Tool = {
     mkdirSync(dirname(abs), { recursive: true });
     writeFileSync(abs, str(args.content, "content"));
     return `wrote ${abs}`;
+  },
+};
+
+const editFile: Tool = {
+  name: "edit_file",
+  description:
+    "Replace an exact substring in a UTF-8 file inside the action directory (surgical edit, unlike write_file which overwrites). `old` must match exactly; it must appear once unless `replaceAll` is set. Fails if not found.",
+  meta: { action: "write" },
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string" },
+      old: { type: "string", description: "exact text to replace (include surrounding context to make it unique)" },
+      new: { type: "string", description: "replacement text" },
+      replaceAll: { type: "boolean", description: "replace every occurrence instead of requiring a unique match" },
+    },
+    required: ["path", "old", "new"],
+  },
+  async run(args, ctx) {
+    const abs = assertWritable(ctx.policy, str(args.path, "path"));
+    const oldText = str(args.old, "old");
+    const newText = str(args.new, "new");
+    if (oldText === newText) throw new SecurityError("edit_file: old and new are identical");
+    const src = readFileSync(abs, "utf8");
+    const count = oldText ? src.split(oldText).length - 1 : 0;
+    if (count === 0) throw new SecurityError(`edit_file: text not found in ${args.path}`);
+    if (count > 1 && !args.replaceAll) throw new SecurityError(`edit_file: text appears ${count}× in ${args.path} — add surrounding context or pass replaceAll`);
+    const out = args.replaceAll ? src.split(oldText).join(newText) : src.replace(oldText, newText);
+    writeFileSync(abs, out);
+    const n = args.replaceAll ? count : 1;
+    return `edited ${abs} (${n} replacement${n === 1 ? "" : "s"})`;
+  },
+};
+
+const grep: Tool = {
+  name: "grep",
+  description:
+    "Search file CONTENTS by regex (case-insensitive) under the action directory; returns path:line:text, capped at 200 hits. Skips node_modules/.git/dist and binary files. This is literal code search — distinct from file_search (semantic index).",
+  meta: { action: "read" },
+  parameters: {
+    type: "object",
+    properties: {
+      pattern: { type: "string", description: "a JavaScript regular expression" },
+      path: { type: "string", description: "subdirectory to search (default the action dir root)" },
+      glob: { type: "string", description: "only files whose name contains this substring (e.g. '.ts')" },
+    },
+    required: ["pattern"],
+  },
+  // ponytail: naive recursive walk + per-line regex, capped. Swap in ripgrep via run_shell if a huge repo
+  // makes this slow, or add proper glob matching if substring filtering proves too coarse.
+  async run(args, ctx) {
+    const root = jailPath(ctx.policy, str(args.path ?? ".", "path"));
+    let re: RegExp;
+    try {
+      re = new RegExp(str(args.pattern, "pattern"), "i");
+    } catch (e) {
+      throw new SecurityError(`grep: invalid regex: ${(e as Error).message}`);
+    }
+    const nameFilter = args.glob ? String(args.glob) : "";
+    const cap = 200;
+    const hits: string[] = [];
+    const walk = (dir: string): void => {
+      if (hits.length >= cap) return;
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (hits.length >= cap) return;
+        if (e.name === "node_modules" || e.name === ".git" || e.name === "dist") continue;
+        const p = join(dir, e.name);
+        if (e.isDirectory()) {
+          walk(p);
+          continue;
+        }
+        if (nameFilter && !e.name.includes(nameFilter)) continue;
+        let text: string;
+        try {
+          text = readFileSync(p, "utf8");
+        } catch {
+          continue; // unreadable / vanished
+        }
+        if (text.includes(String.fromCharCode(0))) continue; // skip binary (NUL byte)
+        const lines = text.split("\n");
+        for (let i = 0; i < lines.length && hits.length < cap; i++) {
+          if (re.test(lines[i]!)) hits.push(`${p}:${i + 1}:${lines[i]!.trim().slice(0, 200)}`);
+        }
+      }
+    };
+    walk(root);
+    return hits.length ? clip(hits.join("\n")) : "[grep] no matches";
   },
 };
 
@@ -194,6 +281,6 @@ const retrieveOriginalTool: Tool = {
 };
 
 export function registerBuiltins(registry: ToolRegistry): ToolRegistry {
-  [readFile, writeFile, listDir, runShell, webFetch, webSearch, webCrawl, retrieveOriginalTool, ...pauseTools].forEach((t) => registry.register(t));
+  [readFile, writeFile, editFile, grep, listDir, runShell, webFetch, webSearch, webCrawl, retrieveOriginalTool, ...pauseTools].forEach((t) => registry.register(t));
   return registry;
 }
