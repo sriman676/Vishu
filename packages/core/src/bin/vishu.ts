@@ -373,7 +373,13 @@ async function serve(): Promise<number> {
   // (change_setting); approved ones persist to modes.json + hot-load. The active mode's prompt layers
   // into the agent's system prompt (below), so a switch actually changes behaviour. Built before the
   // orchestration tools so `dispatch` can route a persona request to a mode switch (Phase-4 mode arm).
-  const modes = new ModeManager({ ask, audit, storePath: join(config.paths.workspaceDir, "modes.json") });
+  const modes = new ModeManager({
+    ask,
+    audit,
+    storePath: join(config.paths.workspaceDir, "modes.json"),
+    // §8 auto-detect: surface a "propose a mode for this?" suggestion on the bus (never auto-activates).
+    onSuggestMode: (need) => bus.publish({ domain: "modes", type: "suggest_mode", payload: { need } }),
+  });
   registerOrchestrationTools(tools, { roles, model: config.provider.model, factory, modes });
   registerModeTools(tools, modes);
   registerModeRpc(registry, modes); // web UI persona switcher + per-mode voiceId (§8)
