@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, watch } from "node:fs";
 import { basename, join } from "node:path";
 import type { VishuPaths } from "../config/paths.js";
 import { loadDomains } from "../connectors/domains.js";
@@ -151,4 +151,28 @@ export function activity(workspaceDir: string, n = 40): ActivityEvent[] {
 
 export function snapshot(paths: VishuPaths, n = 40, domainsFile = defaultDomainsFile()): DashboardSnapshot {
   return { dataMap: dataMap(paths, domainsFile), activity: activity(paths.workspaceDir, n) };
+}
+
+const ACTIVITY_FILES = new Set(["usage.jsonl", "decisions.jsonl", "memory-events.log"]);
+
+/** Push side of §9 (live, not just poll): fire `onChange` (debounced) when an activity log under
+ * workspaceDir changes, so the UI can refresh immediately. Best-effort — if `fs.watch` throws (some
+ * network FS), the frontend poll still covers it. ponytail: 300ms debounce, whole-snapshot refresh (no
+ * per-file granularity); switch to a diff feed only if the snapshot ever gets expensive. */
+export function watchActivity(workspaceDir: string, onChange: () => void): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const w = watch(workspaceDir, (_event, file) => {
+      if (file && ACTIVITY_FILES.has(file.toString())) {
+        clearTimeout(timer);
+        timer = setTimeout(onChange, 300);
+      }
+    });
+    return () => {
+      clearTimeout(timer);
+      w.close();
+    };
+  } catch {
+    return () => {}; // watch unsupported → poll-only, still correct
+  }
 }

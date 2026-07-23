@@ -82,6 +82,7 @@ import { Terminal } from "../tools/terminal.js";
 import { initToken } from "../transport/auth.js";
 import { registerUsage } from "../usage/rpc.js";
 import { registerDashboard } from "../dashboard/rpc.js";
+import { watchActivity } from "../dashboard/dashboard.js";
 import { BudgetWatcher } from "../usage/budget.js";
 import { UsageLog, readUsage } from "../usage/log.js";
 import { buildReport, renderReport } from "../usage/report.js";
@@ -327,6 +328,8 @@ async function serve(): Promise<number> {
   registerMemory(registry, memory);
   registerUsage(registry, config.paths.workspaceDir);
   registerDashboard(registry, config.paths); // §9 "visualize" — read-only data-map + activity feed
+  // §9 live push: an activity-log change publishes a bus event (forwarded over SSE) so the UI refreshes now.
+  watchActivity(config.paths.workspaceDir, () => bus.publish({ domain: "dashboard", type: "changed", payload: {} }));
   registerAudit(registry); // vishu.audit_verify — tamper-check the hash-chained decision log (default file)
   registerReasoningTools(tools, { router, model: config.provider.model });
   registerReasoning(registry, { router, model: config.provider.model });

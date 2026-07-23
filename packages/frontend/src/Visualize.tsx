@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { type DashboardSnapshot, dashboardSnapshot } from "./api.js";
+import { type DashboardSnapshot, dashboardSnapshot, subscribeEvents } from "./api.js";
 
 const ago = (ms: number) => {
   if (!ms) return "";
@@ -25,10 +25,15 @@ export function Visualize({ token }: { token: string }) {
         .then((s) => live && (setSnap(s), setError("")))
         .catch((e) => live && setError(e instanceof Error ? e.message : String(e)));
     load();
-    const id = setInterval(load, 4000);
+    // Live push: refresh the instant an activity log changes; the poll is just a slow fallback now.
+    const unsub = subscribeEvents(token, (e) => {
+      if ((e as { domain?: string })?.domain === "dashboard") load();
+    });
+    const id = setInterval(load, 15000);
     return () => {
       live = false;
       clearInterval(id);
+      unsub();
     };
   }, [token]);
 
