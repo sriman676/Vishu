@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { type Mode, modeActivate, modeList, startTurn, subscribeEvents } from "./api.js";
 import { Orb } from "./Orb.js";
-import { Activity, Board, Calendar, Eval, Inbox, Matters, Memory, Settings } from "./Panels.js";
+import { Activity, Board, Calendar, Empty, Eval, Inbox, Matters, Memory, Settings } from "./Panels.js";
 import { Tokens } from "./Tokens.js";
 import { Visualize } from "./Visualize.js";
 
@@ -164,7 +164,7 @@ export function App() {
       {tab === "settings" && <Settings token={token} model={model} setModel={setModel} />}
       {tab === "notifications" && (
         <div style={{ ...S.chat, fontFamily: "ui-monospace, monospace", fontSize: 12 }}>
-          {notifs.length === 0 && <div style={{ color: "#888" }}>No notifications yet — budget alerts, triggers, and triage land here.</div>}
+          {notifs.length === 0 && <Empty>No notifications yet — budget alerts, triggers, and triage land here.</Empty>}
           {notifs.map((n, i) => (
             <div key={i} style={S.event}>{n}</div>
           ))}
@@ -174,7 +174,7 @@ export function App() {
         <>
       <div style={S.body}>
         <div ref={log} style={S.chat}>
-          {msgs.length === 0 && <div style={{ color: "#888" }}>Start a turn — same `vishu.*` contract as the CLI.</div>}
+          {msgs.length === 0 && <Empty>Start a turn — same `vishu.*` contract as the CLI.</Empty>}
           {msgs.map((m, i) => (
             <div key={i} style={{ ...S.msg, ...(roleStyle[m.role]) }}>
               <span style={S.role}>{m.role}</span>

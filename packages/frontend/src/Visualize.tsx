@@ -37,8 +37,8 @@ export function Visualize({ token }: { token: string }) {
     };
   }, [token]);
 
-  if (error) return <div style={{ padding: 16, color: "#ffb4b4" }}>{error}</div>;
-  if (!snap) return <div style={{ padding: 16, color: "#888" }}>Loading…</div>;
+  if (error) return <div style={{ padding: 16, color: "var(--danger)" }}>{error}</div>;
+  if (!snap) return <div style={{ padding: 16, color: "var(--ink-faint)" }}>Loading…</div>;
 
   return (
     <div style={S.wrap}>
@@ -61,11 +61,11 @@ export function Visualize({ token }: { token: string }) {
         <div style={S.h}>Background activity</div>
         <div style={S.sub}>Live tail of model calls, gate decisions, and memory events.</div>
         {snap.activity.length === 0 ? (
-          <div style={{ color: "#888" }}>Nothing yet — run a turn, then check back.</div>
+          <div style={{ color: "var(--ink-faint)" }}>Nothing yet — run a turn, then check back.</div>
         ) : (
           snap.activity.map((e, i) => (
             <div key={i} style={S.evt}>
-              <span style={{ ...S.tag, color: SRC_COLOR[e.source] ?? "#8aa" }}>{e.source}</span>
+              <span style={{ ...S.tag, color: SRC_COLOR[e.source] ?? "var(--ink-muted)" }}>{e.source}</span>
               <span style={{ flex: 1 }}>{e.text}</span>
               <span style={S.mut}>{ago(e.ts)}</span>
             </div>
@@ -80,7 +80,7 @@ const S: Record<string, React.CSSProperties> = {
   wrap: { flex: 1, overflowY: "auto", padding: 20, display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap" },
   col: { flex: 1, minWidth: 320, display: "flex", flexDirection: "column", gap: 8 },
   h: { fontSize: 16, fontWeight: 600 },
-  sub: { color: "#8aa", fontSize: 12, marginBottom: 6 },
+  sub: { color: "var(--ink-muted)", fontSize: 12, marginBottom: 6 },
   node: { border: "1px solid #2a2f37", borderRadius: 8, padding: "8px 10px", background: "#161a20" },
   nodeTop: { display: "flex", justifyContent: "space-between", alignItems: "baseline" },
   label: { fontWeight: 600, fontSize: 13 },
@@ -88,5 +88,5 @@ const S: Record<string, React.CSSProperties> = {
   path: { fontFamily: "ui-monospace, monospace", fontSize: 11, color: "#6b7480", marginTop: 3, wordBreak: "break-all" },
   evt: { display: "flex", alignItems: "baseline", gap: 10, padding: "5px 0", borderBottom: "1px solid #1a1d22", fontSize: 13 },
   tag: { minWidth: 54, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5 },
-  mut: { color: "#8aa", fontSize: 12, whiteSpace: "nowrap" },
+  mut: { color: "var(--ink-muted)", fontSize: 12, whiteSpace: "nowrap" },
 };
