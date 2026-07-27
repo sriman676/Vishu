@@ -5,3 +5,6 @@ allowBuilds:
 # Force the transitive ws past the DoS advisory (GHSA-96hv-2xvq-fx4p); pulled in only via viem.
 overrides:
   ws: ">=8.21.0"
+  # Runtime transitives under @modelcontextprotocol/sdk — patch past their advisories.
+  fast-uri: ">=3.1.4" # GHSA-v2hh-gcrm-f6hx host confusion (via ajv)
+  "@hono/node-server": ">=2.0.5" # GHSA-frvp-7c67-39w9 path traversal on Windows
