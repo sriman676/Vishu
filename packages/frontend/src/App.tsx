@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { type Mode, modeActivate, modeList, startTurn, subscribeEvents, voiceSpeak, voiceTranscribe } from "./api.js";
 import { type Recording, startRecording } from "./voiceCapture.js";
+import { splitSentences } from "./voiceStream.js";
 import { Orb } from "./Orb.js";
 import { Activity, Automation, Board, Calendar, Eval, Inbox, Matters, Memory, Settings } from "./Panels.js";
 import { Tokens } from "./Tokens.js";
@@ -29,6 +30,9 @@ export function App() {
   const sessionId = useRef<string | undefined>(undefined);
   const rec = useRef<Recording | null>(null);
   const log = useRef<HTMLDivElement>(null);
+  // Playback state for per-sentence TTS + barge-in: the Audio element currently sounding, plus a
+  // cancelled flag the mic (or VAD) flips to interrupt the whole sentence queue mid-reply.
+  const speaking = useRef<{ audio: HTMLAudioElement | null; cancelled: boolean }>({ audio: null, cancelled: false });
 
   useEffect(() => localStorage.setItem("vishu.token", token), [token]);
   useEffect(() => localStorage.setItem("vishu.model", model), [model]);
@@ -76,14 +80,41 @@ export function App() {
   async function speak(text: string) {
     if (!voiceOut || !text.trim()) return;
     const want = modes.find((m) => m.name === activeMode)?.voiceId;
+    const sentences = splitSentences(text);
+    speaking.current.cancelled = false;
     try {
-      const { audio_base64, mime } = await voiceSpeak(token, text, want);
-      const audio = new Audio(`data:${mime};base64,${audio_base64}`);
-      await audio.play();
-      return;
+      // Per-sentence streaming with hold-one-ahead: synth sentence i+1 while sentence i is playing,
+      // so audio starts after the first sentence instead of the whole reply. Barge-in (mic/VAD) flips
+      // `cancelled` to stop between or during sentences.
+      let next: ReturnType<typeof voiceSpeak> | null = voiceSpeak(token, sentences[0], want);
+      for (let i = 0; i < sentences.length; i++) {
+        const cur = await next;
+        if (!cur || speaking.current.cancelled) return;
+        next = sentences[i + 1] ? voiceSpeak(token, sentences[i + 1], want) : null;
+        const audio = new Audio(`data:${cur.mime};base64,${cur.audio_base64}`);
+        speaking.current.audio = audio;
+        await new Promise<void>((resolve, reject) => {
+          audio.onended = () => resolve();
+          audio.onerror = () => reject(new Error("audio playback error"));
+          audio.play().catch(reject);
+        });
+        if (speaking.current.cancelled) return;
+      }
     } catch {
-      speakBrowser(text, want); // graceful fallback: core voice unavailable
+      if (!speaking.current.cancelled) speakBrowser(text, want); // graceful fallback: core voice unavailable
+    } finally {
+      speaking.current.audio = null;
     }
+  }
+
+  /** Barge-in: silence the assistant immediately — pause the sounding sentence, cancel the queue, and
+   * stop any browser-synth fallback. Called when the mic opens (and by the VAD once the mic streams). */
+  function stopSpeaking() {
+    speaking.current.cancelled = true;
+    const a = speaking.current.audio;
+    if (a) { a.pause(); a.currentTime = 0; }
+    speaking.current.audio = null;
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
   }
 
   function speakBrowser(text: string, want?: string) {
@@ -112,7 +143,7 @@ export function App() {
   // depends on the browser's SpeechRecognition. Click to start, click again to stop + transcribe. Falls
   // back to the browser recognizer when getUserMedia/MediaRecorder or the core voice RPC is unavailable.
   async function startVoice() {
-    if ("speechSynthesis" in window) speechSynthesis.cancel(); // barge-in: stop any TTS when the mic opens
+    stopSpeaking(); // barge-in: opening the mic silences the assistant (core Audio + browser synth)
     if (recording) {
       const r = rec.current;
       rec.current = null;
