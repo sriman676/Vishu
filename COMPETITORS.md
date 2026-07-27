@@ -5,6 +5,10 @@
 > model is vet-BLOCKED / not installed. For the honest field-wide matrix (Vishu vs
 > ChatGPT/Gemini/Siri/Manus, where rivals genuinely lead) see
 > `../audit/item5-full-audit-2026-07-27.md`.
+>
+> **2026-07-28 — full-field gap analysis** (all PA AIs: big-tech, hardware,
+> open-source; web-grounded) is now at `../audit/pa-field-analysis-2026-07-28.md`.
+> The table below is the Alfred/Leon niche view; that report is the whole field.
 
 
 Benchmarked against the assistants the user named: **Alfred Black**
@@ -31,11 +35,12 @@ plus the wider open-source PA field.
 | **Local/offline model** | ⚠️ lane wired (`providers/ollama.ts`); IPEX-LLM install **vet-BLOCKED**, Qwen3 not installed | ✅ Ollama | ⛔ cloud | ✅ |
 | Decision log + learned autonomy | ⚠️ gate+runlog (no learned tiers) | ✅ ask→confirm→act | ➖ | ➖ |
 | Knowledge-graph hygiene (contradiction/orphan repair) | ⚠️ `memory_selfheal` (partial) | ✅ | ➖ | ➖ |
-| Rich record types (person/org/decision/daybook) | ⚠️ matter/todo/draft/note | ✅ 12 types | ➖ | ➖ |
-| Background worker agents | ⚠️ evolve/twin (no pool) | ✅ curator/janitor/distiller | ➖ | ✅ agent mode |
+| Rich record types (person/org/decision/daybook) | ✅ org/decision/daybook added (ba71820) | ✅ 12 types | ➖ | ➖ |
+| Background worker agents | ✅ pool: janitor/distiller/curator (b15c577) | ✅ curator/janitor/distiller | ➖ | ✅ agent mode |
+| Cross-LLM self-critique (human-gated) | ✅ `evolve_critique` (7b90810) | ⛔ | ➖ | ⛔ |
 | Browser actuator (real Chrome) | ✅ token-free lane | ➖ | ➖ | ➖ |
 | Financial sidecar | ⛔ | ✅ Sure | ➖ | ➖ |
-| Kanban board UI | ⚠️ list panels (no board) | ✅ Plane | ✅ | ➖ |
+| Kanban board UI | ✅ persistent drag board (e75f48a) | ✅ Plane | ✅ | ➖ |
 | Web UI | ✅ React/Tauri | ✅ Wasp | ✅ | ✅ |
 | Action gate / approvals | ✅ classify-by-intent (send/buy/delete always-ask) | ✅ | ➖ | ➖ |
 | Kill switch / pause | ✅ SIGBREAK instant pause | ➖ | ➖ | ➖ |
