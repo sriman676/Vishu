@@ -11,10 +11,30 @@ import type { Connector, InboundMessage, TriageResult } from "./types.js";
 
 const MATTERS = "matters"; // vault folder + record-type for ongoing concerns
 const DRAFTS = "drafts"; // vault folder for reply drafts awaiting approval
+const ORGS = "orgs"; // vault folder + record-type for organizations (contacts' companies)
+const DECISIONS = "decisions"; // vault folder + record-type for decisions (what + why)
+const DAYBOOK = "daybook"; // vault folder + record-type for the running daily log
 
 /** Open a Matter: an ongoing concern the PA tracks (a deal, a thread, a project). Superseded by subject. */
 export async function openMatter(memory: MemoryStore, subject: string, content: string): Promise<void> {
   await memory.put({ type: "matter", subject, folder: MATTERS, content });
+}
+
+/** Upsert an organization record (Alfred parity: person/org/decision/daybook record types). Subject-keyed. */
+export async function openOrg(memory: MemoryStore, name: string, content: string): Promise<void> {
+  await memory.put({ type: "org", subject: `org-${name}`, folder: ORGS, content: `[[${name}]] — ${content}` });
+}
+
+/** Record a decision (what + why), linked so future recall can cite the rationale instead of re-reasoning it. */
+export async function recordDecision(memory: MemoryStore, subject: string, content: string): Promise<void> {
+  await memory.put({ type: "decision", subject: `decision-${subject}`, folder: DECISIONS, content });
+}
+
+/** Append an entry to the daybook — a running daily log. Append-only: each entry is its own note under the
+ * daybook folder, so recall over `daybook` reconstructs the day without a read-modify-write. */
+export async function appendDaybook(memory: MemoryStore, content: string): Promise<void> {
+  const now = new Date();
+  await memory.put({ type: "daybook", subject: `daybook-${now.toISOString().slice(0, 10)}-${now.getTime()}`, folder: DAYBOOK, content: `- ${content}` });
 }
 
 /** A Matter the inbound message plausibly relates to, ranked by the memory index's hybrid cosine score. */
@@ -84,6 +104,10 @@ export async function processDaily(deps: InboundDeps, msg: InboundMessage): Prom
   // Contact graph (Alfred parity): upsert one `person` record per sender, superseded on each new mail so
   // recall/Matters gain a who's-who over time. Subject-keyed → no duplicates.
   await deps.memory.put({ type: "person", subject: `person-${msg.from}`, folder: "people", content: `[[${msg.from}]] — last seen on ${msg.channel}: ${triage.summary}` });
+
+  // Org graph (Alfred parity): upsert one `org` record per sender domain so the who's-who gains company context.
+  const domain = msg.from.includes("@") ? msg.from.split("@")[1] : undefined;
+  if (domain) await openOrg(deps.memory, domain, `contact [[${msg.from}]] active on ${msg.channel}`);
 
   const matters = await matchMatters(deps.memory, msg.text);
   const task = await extractTask(deps.router, deps.model, msg.text);

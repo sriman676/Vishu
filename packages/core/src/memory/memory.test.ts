@@ -109,6 +109,24 @@ test("self-heal: evicts stale superseded notes and flags same-subject conflicts"
   store.close();
 });
 
+test("self-heal: resolveConflicts keeps the newest same-subject note and removes stale duplicates", async () => {
+  const { vault, db } = paths();
+  let store = new MemoryStore(vault, db);
+  await store.put({ content: "seed", subject: "seed" }); // creates the vault dir
+  store.close();
+  // Two live notes sharing a subject (e.g. both edited directly in Obsidian) — the older is stale.
+  writeFileSync(join(vault, "dup-a.md"), note("type: fact\nsubject: color\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z", "the color is red"));
+  writeFileSync(join(vault, "dup-b.md"), note("type: fact\nsubject: color\ncreated: 2026-02-01T00:00:00Z\nupdated: 2026-02-01T00:00:00Z", "the color is blue"));
+  store = new MemoryStore(vault, db);
+  store.reindex();
+  const healed = selfHealMemory(store, { resolveConflicts: true });
+  assert.deepEqual(healed.resolved, [{ subject: "color", kept: "dup-b", removed: ["dup-a"] }]);
+  assert.ok(!existsSync(join(vault, "dup-a.md")), "the stale duplicate file is removed");
+  assert.ok(existsSync(join(vault, "dup-b.md")), "the newest note is kept");
+  assert.deepEqual(healed.conflicts, [], "no conflicts remain after resolution");
+  store.close();
+});
+
 test("self-heal: reports broken links and orphans; a well-linked note is neither", async () => {
   const { vault, db } = paths();
   const store = new MemoryStore(vault, db);

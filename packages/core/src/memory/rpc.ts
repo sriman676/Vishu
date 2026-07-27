@@ -24,9 +24,10 @@ export function registerMemory(registry: Registry, store: MemoryStore): void {
     return ok(await rollupSession(store, { since: p.since, subject: p.subject }));
   });
 
-  // Self-healing: evict stale superseded notes (bound growth) + report same-subject conflicts.
+  // Self-healing: evict stale superseded notes (bound growth), report conflicts/broken-links/orphans, and
+  // (opt-in) auto-repair same-subject contradictions by keeping the newest and removing stale duplicates.
   registry.register("vishu.memory_selfheal", (params) => {
-    const p = (params ?? {}) as { olderThanDays?: number };
-    return ok(selfHealMemory(store, { olderThanDays: p.olderThanDays }));
+    const p = (params ?? {}) as { olderThanDays?: number; resolveConflicts?: boolean };
+    return ok(selfHealMemory(store, { olderThanDays: p.olderThanDays, resolveConflicts: p.resolveConflicts }));
   });
 }

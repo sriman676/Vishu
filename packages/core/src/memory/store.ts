@@ -309,6 +309,24 @@ export class MemoryStore {
       .map((n) => n.name);
   }
 
+  /** Repair same-subject contradictions: for each subject with multiple live notes, keep the newest
+   * (recall already prefers it) and remove the stale duplicates. Opt-in — removing notes is a trust
+   * boundary, so `selfHeal` only calls this when explicitly asked. Returns what was kept/removed. */
+  resolveConflicts(): { subject: string; kept: string; removed: string[] }[] {
+    const out: { subject: string; kept: string; removed: string[] }[] = [];
+    for (const { subject } of this.conflicts()) {
+      const live = this.notes()
+        .filter((n) => n.subject === subject)
+        .sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated));
+      const [keep, ...stale] = live;
+      if (!keep || !stale.length) continue;
+      for (const s of stale) this.vault.remove(s.name);
+      out.push({ subject, kept: keep.name, removed: stale.map((s) => s.name) });
+    }
+    if (out.length) this.reindex();
+    return out;
+  }
+
   /** Re-derive the whole index from the markdown vault (resets the breaker). */
   reindex(): number {
     this.breakerOpen = false;

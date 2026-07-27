@@ -7,7 +7,7 @@ import { MemoryStore } from "../memory/store.js";
 import { ScriptedProvider } from "../providers/mock.js";
 import { Router } from "../providers/router.js";
 import { EventBus } from "../transport/events.js";
-import { buildBriefing, openMatter, matchMatters, parseTask, processDaily, StubMailConnector, StubCalendar } from "./daily.js";
+import { appendDaybook, buildBriefing, openMatter, openOrg, matchMatters, parseTask, processDaily, recordDecision, StubMailConnector, StubCalendar } from "./daily.js";
 
 test("parseTask: reads TASK/DUE, returns null when the model says none", () => {
   assert.deepEqual(parseTask("TASK: send the invoice\nDUE: 2026-07-20"), { task: "send the invoice", due: "2026-07-20" });
@@ -24,6 +24,19 @@ test("matchMatters: cosine/lexical-matches an inbound against open Matters, filt
   const hits = await matchMatters(memory, "following up on the Acme contract renewal terms");
   assert.equal(hits.length, 1);
   assert.match(hits[0].body, /Acme/);
+  memory.close();
+});
+
+test("rich record types: openOrg / recordDecision / appendDaybook file typed, foldered records", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "vishu-records-"));
+  const memory = new MemoryStore(join(dir, "vault"), join(dir, "mem.db"));
+  await openOrg(memory, "acme.com", "vendor for the renewal");
+  await recordDecision(memory, "db-choice", "Chose SQLite over Postgres — single-VM, no server to run.");
+  await appendDaybook(memory, "shipped the daily-driver");
+  const types = memory.notes().reduce((m, n) => m.set(n.type, (m.get(n.type) ?? 0) + 1), new Map<string, number>());
+  assert.equal(types.get("org"), 1);
+  assert.equal(types.get("decision"), 1);
+  assert.equal(types.get("daybook"), 1);
   memory.close();
 });
 
