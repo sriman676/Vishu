@@ -1,4 +1,11 @@
-# Vishu vs. the PA-AI field (2026-07-12)
+# Vishu vs. the PA-AI field (2026-07-12; honesty pass 2026-07-27)
+
+> **2026-07-27 correction:** the voice and local-model rows below were downgraded
+> from ✅ to ⚠️ — voice is built but unverified on mic HW, and the IPEX-LLM local
+> model is vet-BLOCKED / not installed. For the honest field-wide matrix (Vishu vs
+> ChatGPT/Gemini/Siri/Manus, where rivals genuinely lead) see
+> `../audit/item5-full-audit-2026-07-27.md`.
+
 
 Benchmarked against the assistants the user named: **Alfred Black**
 (`ssdavidai/alfred`, the self-hosted anticipatory butler), **get-alfred.ai**
@@ -17,11 +24,11 @@ plus the wider open-source PA field.
 | Calendar conflict/focus logic | ⛔ stub (needs cal token) | ✅ | ✅ | ➖ |
 | Messaging channels | ✅ Telegram/Slack/SMS | ✅ Telegram/Slack | ✅ SMS | ➖ |
 | 1000+ app integrations | ✅ Composio domain | ✅ Composio | ➖ | ➖ |
-| **Voice (STT + TTS + orb)** | ✅ **full-duplex + barge-in** | ⛔ none | ⛔ none | ✅ STT/TTS |
+| **Voice (STT + TTS + orb)** | ⚠️ **built (full-duplex + barge-in) — UNVERIFIED on mic HW** | ⛔ none | ⛔ none | ✅ STT/TTS |
 | Personas / modes | ✅ 4 modes + per-mode voice + switcher | ➖ profiles | ➖ | ➖ modes |
 | Obsidian-compatible vault | ✅ | ✅ | ➖ | ➖ |
 | Vector/hybrid memory recall | ✅ FTS+lexical+embedding | ✅ state.db | ➖ | ✅ layered |
-| **Local/offline model** | ✅ **IPEX-LLM + Qwen3-8B on Arc** | ✅ Ollama | ⛔ cloud | ✅ |
+| **Local/offline model** | ⚠️ lane wired (`providers/ollama.ts`); IPEX-LLM install **vet-BLOCKED**, Qwen3 not installed | ✅ Ollama | ⛔ cloud | ✅ |
 | Decision log + learned autonomy | ⚠️ gate+runlog (no learned tiers) | ✅ ask→confirm→act | ➖ | ➖ |
 | Knowledge-graph hygiene (contradiction/orphan repair) | ⚠️ `memory_selfheal` (partial) | ✅ | ➖ | ➖ |
 | Rich record types (person/org/decision/daybook) | ⚠️ matter/todo/draft/note | ✅ 12 types | ➖ | ➖ |
@@ -37,16 +44,20 @@ plus the wider open-source PA field.
 ✅ have · ⚠️ partial · ⛔ missing/blocked · ➖ not offered by them
 
 ## Where Vishu already wins
-Voice (all three rivals lack it), per-mode personas with distinct voices, a
-real-Chrome browser actuator, an out-of-band kill switch, a token/cost
-dashboard, and an eval harness. Vishu is the only one of the four with a
-first-class voice+orb loop.
+Per-mode personas with distinct voices, a real-Chrome browser actuator, an
+out-of-band kill switch, a token/cost dashboard, and an eval harness. Vishu's
+voice+orb loop is the most ambitious of the four (Leon has plain STT/TTS; the
+two Alfreds have none) — but note it is **built, not yet HW-verified**, so treat
+it as a lead-in-waiting, not a proven win.
 
 ## Gaps closed in this run
 1. **Draft in your voice** — daily-driver reply drafts now inject the identity
    profile so replies sound like the user (Alfred parity, cheap win).
-2. **Local/offline model** — IPEX-LLM (Ollama-compatible) + Qwen3-8B on the Arc
-   iGPU, wired as the `intel` provider preset. Matches Alfred/Leon offline story.
+2. **Local/offline model** — the local lane is wired (`providers/ollama.ts`,
+   `intel`/`!private` preset). Honesty: the **IPEX-LLM install is vet-BLOCKED**
+   (6 exfil flags) and Qwen3-8B is **not installed**; a small local model has run
+   ad-hoc but a council-grade local model is still missing. So the lane exists,
+   the offline story is not yet fully matched to Alfred/Leon.
 3. **Decision records + autonomy hint** — every gated approval is logged; after N
    approvals of the same action class Vishu *suggests* automating it (never
    auto-sends: send/buy/delete stay always-ask, per the locked gate decision).
