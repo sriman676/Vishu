@@ -112,6 +112,14 @@ export const voiceSpeak = (token: string, text: string, voiceId?: string) =>
 export const voiceTranscribe = (token: string, audioBase64: string, format = "wav") =>
   rpc<{ text: string; engine?: string }>(token, "vishu.voice_transcribe", { audio_base64: audioBase64, format });
 
+// Full-duplex streaming STT: open a session, push the growing mic WAV for live partials, end for final.
+export const voiceSttStart = (token: string, model?: string) =>
+  rpc<{ sessionId: string }>(token, "vishu.voice_stt_start", { model });
+export const voiceSttChunk = (token: string, sessionId: string, audioBase64: string, format = "wav") =>
+  rpc<{ partial: string; engine?: string }>(token, "vishu.voice_stt_chunk", { sessionId, audio_base64: audioBase64, format });
+export const voiceSttEnd = (token: string, sessionId: string) =>
+  rpc<{ final: string }>(token, "vishu.voice_stt_end", { sessionId });
+
 /** Subscribe to the core's SSE bus (tool:sync, notifications). Returns an unsubscribe. */
 export function subscribeEvents(token: string, onEvent: (e: unknown) => void): () => void {
   const es = new EventSource(`/events?token=${encodeURIComponent(token)}`);

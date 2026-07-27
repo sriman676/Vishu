@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { type Mode, modeActivate, modeList, startTurn, subscribeEvents, voiceSpeak, voiceTranscribe } from "./api.js";
-import { type Recording, startRecording } from "./voiceCapture.js";
+import { type Mode, modeActivate, modeList, startTurn, subscribeEvents, voiceSpeak, voiceSttChunk, voiceSttEnd, voiceSttStart } from "./api.js";
+import { type Streaming, startStreaming } from "./voiceCapture.js";
 import { splitSentences } from "./voiceStream.js";
+
+const VAD_THRESHOLD = 0.02; // mic-energy over this while the assistant is talking = barge-in (see isSpeech)
 import { Orb } from "./Orb.js";
 import { Activity, Automation, Board, Calendar, Eval, Inbox, Matters, Memory, Settings } from "./Panels.js";
 import { Tokens } from "./Tokens.js";
@@ -28,7 +30,9 @@ export function App() {
   const [recording, setRecording] = useState(false);
   const [tab, setTab] = useState<Tab>("chat");
   const sessionId = useRef<string | undefined>(undefined);
-  const rec = useRef<Recording | null>(null);
+  const stream = useRef<Streaming | null>(null);
+  const sttId = useRef<string | undefined>(undefined);
+  const baseInput = useRef(""); // whatever was typed before dictation, so partials don't clobber it
   const log = useRef<HTMLDivElement>(null);
   // Playback state for per-sentence TTS + barge-in: the Audio element currently sounding, plus a
   // cancelled flag the mic (or VAD) flips to interrupt the whole sentence queue mid-reply.
@@ -145,24 +149,45 @@ export function App() {
   async function startVoice() {
     stopSpeaking(); // barge-in: opening the mic silences the assistant (core Audio + browser synth)
     if (recording) {
-      const r = rec.current;
-      rec.current = null;
+      const s = stream.current;
+      const id = sttId.current;
+      stream.current = null;
+      sttId.current = undefined;
       setRecording(false);
-      if (!r) return;
       try {
-        const wav = await r.stop();
-        const { text } = await voiceTranscribe(token, wav);
-        if (text.trim()) setInput((cur) => (cur ? `${cur} ` : "") + text.trim());
+        if (s) await s.stop();
+        if (id) {
+          const { final } = await voiceSttEnd(token, id);
+          if (final.trim()) setInput(baseInput.current + final.trim());
+        }
       } catch (e) {
         setMsgs((m) => [...m, { role: "error", content: `voice transcribe failed: ${e instanceof Error ? e.message : String(e)}` }]);
       }
       return;
     }
     try {
-      rec.current = await startRecording();
+      baseInput.current = input ? `${input} ` : "";
+      const { sessionId } = await voiceSttStart(token);
+      sttId.current = sessionId;
+      stream.current = await startStreaming({
+        // Live partials replace the field (prefixed by whatever was already typed) as the user speaks.
+        onChunk: async (wav) => {
+          try {
+            const { partial } = await voiceSttChunk(token, sessionId, wav);
+            if (partial.trim()) setInput(baseInput.current + partial.trim());
+          } catch {
+            /* a dropped chunk just means a stale partial — the next chunk (or end) recovers */
+          }
+        },
+        // Full-duplex barge-in: if the user talks over the assistant, cut the TTS immediately.
+        onFrame: (energy) => {
+          if (speaking.current.audio && energy >= VAD_THRESHOLD) stopSpeaking();
+        },
+      });
       setRecording(true);
     } catch {
-      startVoiceBrowser(); // no mic API → browser recognizer fallback
+      sttId.current = undefined;
+      startVoiceBrowser(); // no mic/stream API → browser recognizer fallback
     }
   }
 

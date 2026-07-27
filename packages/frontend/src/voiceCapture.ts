@@ -2,6 +2,8 @@
 // wants), base64'd for the vishu.voice_transcribe RPC. This replaces the browser SpeechRecognition
 // dependency — the audio is transcribed server-side, so it works cross-browser and headless-capable.
 
+import { rmsEnergy } from "./voiceStream.js";
+
 export interface Recording {
   /** Stop the mic and resolve the captured audio as a base64 WAV. */
   stop(): Promise<string>;
@@ -36,17 +38,10 @@ export async function startRecording(): Promise<Recording> {
 
 const TARGET_RATE = 16_000;
 
-/** Downmix to mono, linear-resample to 16 kHz, and encode a 16-bit PCM WAV.
+/** Linear-resample a mono Float32 buffer to 16 kHz 16-bit PCM.
  * ponytail: linear resample — fine for speech; a windowed-sinc is the upgrade if quality matters. */
-function wavFromBuffer(buf: AudioBuffer): ArrayBuffer {
-  const chans = Array.from({ length: buf.numberOfChannels }, (_, c) => buf.getChannelData(c));
-  const mono = new Float32Array(buf.length);
-  for (let i = 0; i < buf.length; i++) {
-    let s = 0;
-    for (const ch of chans) s += ch[i];
-    mono[i] = s / chans.length;
-  }
-  const ratio = buf.sampleRate / TARGET_RATE;
+function resampleTo16k(mono: Float32Array, srcRate: number): Int16Array {
+  const ratio = srcRate / TARGET_RATE;
   const outLen = Math.floor(mono.length / ratio);
   const pcm = new Int16Array(outLen);
   for (let i = 0; i < outLen; i++) {
@@ -56,7 +51,61 @@ function wavFromBuffer(buf: AudioBuffer): ArrayBuffer {
     const sample = mono[lo] * (1 - frac) + (mono[lo + 1] ?? mono[lo]) * frac;
     pcm[i] = Math.max(-1, Math.min(1, sample)) * 0x7fff;
   }
-  return encodeWav(pcm, TARGET_RATE);
+  return pcm;
+}
+
+/** Downmix an AudioBuffer to mono, resample to 16 kHz, encode a 16-bit PCM WAV. */
+function wavFromBuffer(buf: AudioBuffer): ArrayBuffer {
+  const chans = Array.from({ length: buf.numberOfChannels }, (_, c) => buf.getChannelData(c));
+  const mono = new Float32Array(buf.length);
+  for (let i = 0; i < buf.length; i++) {
+    let s = 0;
+    for (const ch of chans) s += ch[i];
+    mono[i] = s / chans.length;
+  }
+  return encodeWav(resampleTo16k(mono, buf.sampleRate), TARGET_RATE);
+}
+
+export interface Streaming {
+  /** Stop the mic, flush nothing (the caller ends the STT session), release the audio graph. */
+  stop(): Promise<void>;
+}
+
+/** Full-duplex capture: stream the growing utterance as a 16 kHz WAV every `intervalMs` (for live STT
+ * partials) and report per-frame mic energy (for barge-in VAD). Rejects if getUserMedia is unavailable.
+ * echoCancellation is requested so the assistant's own TTS playing through the speakers doesn't feed
+ * back as "user speech" — real acoustic isolation still depends on the hardware/room (a tuning knob).
+ * ponytail: ScriptProcessorNode (deprecated but universal) + whole-utterance re-encode each tick — an
+ * AudioWorklet + incremental encoder is the upgrade if CPU matters on long dictation. */
+export async function startStreaming(opts: {
+  onChunk: (wavBase64: string) => void;
+  onFrame?: (energy: number) => void;
+  intervalMs?: number;
+}): Promise<Streaming> {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  const ctx = new AudioContext();
+  const source = ctx.createMediaStreamSource(stream);
+  const node = ctx.createScriptProcessor(4096, 1, 1);
+  const samples: number[] = [];
+  node.onaudioprocess = (e) => {
+    const input = e.inputBuffer.getChannelData(0);
+    for (let i = 0; i < input.length; i++) samples.push(input[i]);
+    opts.onFrame?.(rmsEnergy(input));
+  };
+  source.connect(node);
+  node.connect(ctx.destination); // some browsers only fire onaudioprocess when the node is connected out
+  const tick = setInterval(() => {
+    if (samples.length) opts.onChunk(base64(encodeWav(resampleTo16k(Float32Array.from(samples), ctx.sampleRate), TARGET_RATE)));
+  }, opts.intervalMs ?? 1500);
+  return {
+    stop: async () => {
+      clearInterval(tick);
+      node.disconnect();
+      source.disconnect();
+      stream.getTracks().forEach((t) => t.stop());
+      await ctx.close();
+    },
+  };
 }
 
 /** 44-byte canonical WAV header + interleaved 16-bit PCM (mono). */
