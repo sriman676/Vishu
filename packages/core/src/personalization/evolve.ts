@@ -17,7 +17,7 @@ export type ProposalStatus = "pending" | "accepted" | "dismissed";
 export interface Proposal {
   /** Stable id: same opportunity → same sig across runs (so a re-scan never re-proposes it). */
   sig: string;
-  kind: "split" | "todo" | "tests";
+  kind: "split" | "todo" | "tests" | "critique";
   target: string; // relative path, or "project"
   detail: string;
   status: ProposalStatus;
@@ -86,11 +86,18 @@ export class ProjectEvolver {
    * Returns only the proposals added this pass. Re-recording a dismissed/accepted sig is a no-op —
    * the human decision sticks. */
   propose(dir: string): Proposal[] {
+    return this.record(analyzeProject(dir));
+  }
+
+  /** Record externally-produced opportunities (the heuristic scan, or an LLM critique) as pending
+   * proposals, deduped by sig. A prior human decision on a sig sticks; a still-pending item just gets
+   * its detail refreshed. Returns only what was newly added. The whole propose/accept/dismiss gate is
+   * shared, so LLM-sourced proposals are as suggest-only as the heuristic ones. */
+  record(found: Omit<Proposal, "status" | "firstSeen">[]): Proposal[] {
     const added: Proposal[] = [];
-    for (const f of analyzeProject(dir)) {
+    for (const f of found) {
       const existing = this.data.proposals[f.sig];
       if (existing) {
-        // Keep the human decision, but refresh the detail (e.g. LOC changed) for a still-pending item.
         if (existing.status === "pending") existing.detail = f.detail;
         continue;
       }

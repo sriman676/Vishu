@@ -1,15 +1,29 @@
 import type { WorkflowStore } from "../automation/workflows.js";
 import { err, ok, type Registry } from "../transport/rpc.js";
-import type { ProjectEvolver } from "./evolve.js";
+import type { ProjectEvolver, Proposal } from "./evolve.js";
 import type { IdentityProfile } from "./profile.js";
 import type { DigitalTwin } from "./twin.js";
 
 /** Expose the self-evolving loop over `vishu.evolve_*` — proposals are suggest-only; accept saves a
  * runnable workflow (never auto-applies), dismiss buries the sig. The cron pass produces them. */
-export function registerEvolve(registry: Registry, evolver: ProjectEvolver, workflows: WorkflowStore): void {
+export function registerEvolve(
+  registry: Registry,
+  evolver: ProjectEvolver,
+  workflows: WorkflowStore,
+  /** Cross-LLM self-improvement (item 4): a critic model reviews Vishu's own prompts and returns
+   * suggest-only opportunities. Manual-trigger only (never on the cron) so it can't silently burn
+   * provider tokens. Absent → the vishu.evolve_critique RPC reports it's unconfigured. */
+  critic?: () => Promise<Omit<Proposal, "status" | "firstSeen">[]>,
+): void {
   registry.register("vishu.evolve_proposals", (params) => {
     const p = (params ?? {}) as { pending?: boolean };
     return ok(p.pending === false ? evolver.list() : evolver.pending());
+  });
+
+  // On-demand cross-LLM critique of Vishu's own prompts → recorded through the same suggest-only gate.
+  registry.register("vishu.evolve_critique", async () => {
+    if (!critic) return err("unavailable", "no critic configured — assign a 'reviewer' role to a second AI");
+    return ok(evolver.record(await critic()));
   });
 
   registry.register("vishu.evolve_decide", (params) => {

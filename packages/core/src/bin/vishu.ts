@@ -40,6 +40,7 @@ import { registerMemoryTools } from "../memory/tools.js";
 import { ProjectEvolver, runEvolutionPass } from "../personalization/evolve.js";
 import { DigitalTwin } from "../personalization/twin.js";
 import { IdentityProfile } from "../personalization/profile.js";
+import { critiquePrompts } from "../personalization/critique.js";
 import { registerEvolve, registerProfile, registerTwin } from "../personalization/rpc.js";
 import { registerOrchestrationTools } from "../orchestration/tools.js";
 import { AgentFactory } from "../orchestration/factory.js";
@@ -455,7 +456,12 @@ async function serve(): Promise<number> {
   // Phase 13: self-evolving loop — scan the action dir for cheap improvements on a daily cron and
   // record them as suggest-only proposals (never auto-applied). Reachable over vishu.evolve_*.
   const evolver = new ProjectEvolver(join(config.paths.workspaceDir, "evolve.json"));
-  registerEvolve(registry, evolver, workflows);
+  // Cross-LLM self-improvement (item 4): only when a distinct 'reviewer' AI is assigned (so the critique
+  // is genuinely cross-model, not self-review). Manual-trigger over vishu.evolve_critique — never on a cron.
+  const critic = roles.roles().includes("reviewer")
+    ? () => critiquePrompts(roles.for("reviewer"), roles.modelFor("reviewer") ?? config.provider.model)
+    : undefined;
+  registerEvolve(registry, evolver, workflows, critic);
   registerTwin(registry, twin, workflows);
   registerProfile(registry, profile, twin);
   const evolveTick = () => runEvolutionPass(evolver, config.paths.actionDir, bus);
