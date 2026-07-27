@@ -3,7 +3,12 @@ import { automationAddTrigger, automationList, automationSaveWorkflow, configSum
 
 const box: React.CSSProperties = { flex: 1, overflowY: "auto", padding: "var(--space-lg)", display: "flex", flexDirection: "column", gap: "var(--space-md)" };
 
-const TIER_COLOR: Record<string, string> = { urgent: "var(--danger)", needs_action: "var(--accent)", info: "#8aa", skip: "#888" };
+/** Consistent empty/placeholder line — one muted, tokenized style for every panel's "nothing yet" state. */
+export const Empty = ({ children }: { children: React.ReactNode }) => (
+  <div style={{ color: "var(--ink-faint)", fontSize: 13, padding: "var(--space-sm) 0" }}>{children}</div>
+);
+
+const TIER_COLOR: Record<string, string> = { urgent: "var(--danger)", needs_action: "var(--accent)", info: "var(--ink-muted)", skip: "var(--ink-faint)" };
 
 /** §11g Inbox/triage: paste an inbound message → connectors_daily triages it, matches Matters, files a to-do
  * and a reply draft (never sent). Also fires the one-shot daily briefing. */
@@ -45,15 +50,15 @@ export function Inbox({ token }: { token: string }) {
       {brief && <div className="card" style={{ whiteSpace: "pre-wrap" }}>{brief}</div>}
       {res && (
         <div className="card">
-          <div style={{ color: TIER_COLOR[res.triage.tier] ?? "#8aa", fontWeight: 600 }}>{res.triage.tier.toUpperCase()}</div>
+          <div style={{ color: TIER_COLOR[res.triage.tier] ?? "var(--ink-muted)", fontWeight: 600 }}>{res.triage.tier.toUpperCase()}</div>
           <div style={{ marginTop: 4 }}>{res.triage.summary}</div>
           {res.task && <div style={{ marginTop: 8 }}>📋 to-do: <strong>{res.task.task}</strong>{res.task.due ? ` (due: ${res.task.due})` : ""}</div>}
           {res.matters.length > 0 && (
-            <div style={{ marginTop: 8, fontSize: 12, color: "#8aa" }}>related matters: {res.matters.map((m) => m.name).join(", ")}</div>
+            <div style={{ marginTop: 8, fontSize: 12, color: "var(--ink-muted)" }}>related matters: {res.matters.map((m) => m.name).join(", ")}</div>
           )}
           {res.draft && (
             <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 12, color: "#8aa" }}>filed reply draft (not sent):</div>
+              <div style={{ fontSize: 12, color: "var(--ink-muted)" }}>filed reply draft (not sent):</div>
               <div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{res.draft}</div>
             </div>
           )}
@@ -88,13 +93,13 @@ export function Eval({ token }: { token: string }) {
         <div className="card">
           <div style={{ fontSize: 18, marginBottom: 8 }}>
             {data.report.runner}: <strong>{Math.round(data.report.passRate * 100)}%</strong> pass
-            {data.trend.delta !== undefined && <span style={{ color: data.trend.delta >= 0 ? "#7c7" : "#d77", marginLeft: 8 }}>{data.trend.delta >= 0 ? "+" : ""}{data.trend.delta.toFixed(2)} vs prev</span>}
+            {data.trend.delta !== undefined && <span style={{ color: data.trend.delta >= 0 ? "var(--ok)" : "var(--danger)", marginLeft: 8 }}>{data.trend.delta >= 0 ? "+" : ""}{data.trend.delta.toFixed(2)} vs prev</span>}
           </div>
           {data.report.results.map((r) => (
             <div key={r.id} style={{ display: "flex", gap: 8, padding: "3px 0", fontFamily: "ui-monospace, monospace", fontSize: 13 }}>
-              <span style={{ color: r.passed ? "#7c7" : "#d77" }}>{r.passed ? "✓" : "✗"}</span>
+              <span style={{ color: r.passed ? "var(--ok)" : "var(--danger)" }}>{r.passed ? "✓" : "✗"}</span>
               <span style={{ flex: 1 }}>{r.id}</span>
-              <span style={{ color: "#8aa" }}>{r.ms}ms</span>
+              <span style={{ color: "var(--ink-muted)" }}>{r.ms}ms</span>
             </div>
           ))}
         </div>
@@ -121,10 +126,10 @@ export function Memory({ token }: { token: string }) {
         <input className="input" placeholder="search the vault…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} />
         <button className="btn" onClick={search}>Recall</button>
       </div>
-      {notes.length === 0 && <div style={{ color: "#888" }}>Recall gathers matched notes + linked neighbours — never a vault dump.</div>}
+      {notes.length === 0 && <Empty>Recall gathers matched notes + linked neighbours — never a vault dump.</Empty>}
       {notes.map((n) => (
         <div key={n.name} className="card">
-          <div style={{ color: "#8aa", fontSize: 12, marginBottom: 4 }}>{n.name} ({n.type}) · via {n.via} · {n.score.toFixed(2)}</div>
+          <div style={{ color: "var(--ink-muted)", fontSize: 12, marginBottom: 4 }}>{n.name} ({n.type}) · via {n.via} · {n.score.toFixed(2)}</div>
           <div style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{n.body}</div>
         </div>
       ))}
@@ -155,14 +160,14 @@ export function Matters({ token }: { token: string }) {
         <input className="input" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} />
         <button className="btn" onClick={search}>Recall</button>
       </div>
-      {notes.length === 0 && <div style={{ color: "#888" }}>No matters or to-dos filed yet — triage a message in Inbox to file some.</div>}
+      {notes.length === 0 && <Empty>No matters or to-dos filed yet — triage a message in Inbox to file some.</Empty>}
       {(["matter", "todo"] as const).map((t) =>
         group(t).length === 0 ? null : (
           <div key={t}>
             <div style={{ color: "var(--accent)", fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, margin: "4px 0" }}>{t === "matter" ? "Matters" : "To-dos"}</div>
             {group(t).map((n) => (
               <div key={n.name} className="card" style={{ marginBottom: 8 }}>
-                <div style={{ color: "#8aa", fontSize: 12, marginBottom: 4 }}>{n.name}</div>
+                <div style={{ color: "var(--ink-muted)", fontSize: 12, marginBottom: 4 }}>{n.name}</div>
                 <div style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{n.body}</div>
               </div>
             ))}
@@ -203,7 +208,7 @@ export function Board({ token }: { token: string }) {
 
   return (
     <div style={box}>
-      {notes.length === 0 && <div style={{ color: "#888" }}>No tasks or matters yet — triage a message in Inbox to fill the board.</div>}
+      {notes.length === 0 && <Empty>No tasks or matters yet — triage a message in Inbox to fill the board.</Empty>}
       <div style={{ display: "flex", gap: "var(--space-md)", alignItems: "flex-start" }}>
         {columns.map((col) => (
           <div key={col.title} style={{ flex: 1, minWidth: 0 }}>
@@ -213,7 +218,7 @@ export function Board({ token }: { token: string }) {
             {col.cards.map((c) => (
               <div key={c.key} className="card" style={{ marginBottom: 8 }}>
                 <div style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{c.label}</div>
-                <div style={{ color: "#8aa", fontSize: 11, marginTop: 4 }}>{c.sub}</div>
+                <div style={{ color: "var(--ink-muted)", fontSize: 11, marginTop: 4 }}>{c.sub}</div>
               </div>
             ))}
           </div>
@@ -243,10 +248,10 @@ export function Calendar({ token }: { token: string }) {
   }, [token]);
   return (
     <div style={box}>
-      <div className="card" style={{ color: "#8aa" }}>
+      <div className="card" style={{ color: "var(--ink-muted)" }}>
         📅 No calendar connected. Set <code>VISHU_GCAL_TOKEN</code> (or <code>VISHU_OUTLOOK_TOKEN</code>) to sync live events. Until then, dated to-dos appear below.
       </div>
-      {due.length === 0 && <div style={{ color: "#888" }}>No dated to-dos yet.</div>}
+      {due.length === 0 && <Empty>No dated to-dos yet.</Empty>}
       {due.map((d) => (
         <div key={d.name} className="card">
           <div style={{ color: "var(--accent)", fontSize: 12 }}>due: {d.when}</div>
@@ -260,7 +265,7 @@ export function Calendar({ token }: { token: string }) {
 /** §9 Activity dashboard: the SSE bus as a categorized live feed. Sorts each event into gate / trigger /
  * sync / notification by its domain/type/payload, colours it, and shows a per-category count. */
 type Cat = "gate" | "trigger" | "sync" | "notification" | "other";
-const CAT_COLOR: Record<Cat, string> = { gate: "#c58af9", trigger: "#7aa2f7", sync: "#7c7", notification: "#e0af68", other: "#888" };
+const CAT_COLOR: Record<Cat, string> = { gate: "#c58af9", trigger: "#7aa2f7", sync: "var(--ok)", notification: "#e0af68", other: "var(--ink-faint)" };
 function categorize(raw: string): { cat: Cat; text: string } {
   let e: { domain?: string; type?: string; payload?: Record<string, unknown> } = {};
   try {
@@ -289,7 +294,7 @@ export function Activity({ events }: { events: string[] }) {
           </span>
         ))}
       </div>
-      {items.length === 0 && <div style={{ color: "#888" }}>No activity yet — gate decisions, triggers, tool syncs, and notifications stream here live.</div>}
+      {items.length === 0 && <Empty>No activity yet — gate decisions, triggers, tool syncs, and notifications stream here live.</Empty>}
       {items
         .slice()
         .reverse()

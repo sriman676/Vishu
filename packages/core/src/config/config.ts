@@ -1,5 +1,13 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { loadNimState } from "../providers/nimrefresh.js";
+import { assignRoles, discoverProviders, toPool } from "../providers/registry.js";
 import { resolvePaths, type VishuPaths } from "./paths.js";
+
+/** Where the weekly best-available NIM chain is persisted (VISHU_NIM_STATE overrides). */
+export function nimStateFile(env: NodeJS.ProcessEnv = process.env): string {
+  return env.VISHU_NIM_STATE || join(process.cwd(), "nim-models.json");
+}
 
 export type ProviderType = "mock" | "openai" | "anthropic" | "ollama";
 
@@ -11,6 +19,8 @@ export interface ProviderConfig {
   apiKeys: string[];
   /** Parallel to apiKeys: a human label per key (failover order = array order). */
   keyLabels: string[];
+  /** Reroute chain: models to retry (in order) when `model` times out / 5xxs / is gone. Router-level. */
+  modelFallbacks?: string[];
 }
 
 /** A file-config key may be a bare string or `{ key, label }` to name it explicitly. */
@@ -59,19 +69,37 @@ const PRESETS: Record<string, { type: ProviderType; baseUrl: string; model: stri
   nvidia: { type: "openai", baseUrl: "https://integrate.api.nvidia.com/v1", model: "meta/llama-3.1-8b-instruct" },
   mistral: { type: "openai", baseUrl: "https://api.mistral.ai/v1", model: "mistral-small-latest" },
   together: { type: "openai", baseUrl: "https://api.together.xyz/v1", model: "meta-llama/Llama-3.3-70B-Instruct-Turbo" },
-  fireworks: { type: "openai", baseUrl: "https://api.fireworks.ai/inference/v1", model: "accounts/fireworks/models/llama-v3p1-8b-instruct" },
+  fireworks: { type: "openai", baseUrl: "https://api.fireworks.ai/inference/v1", model: "accounts/fireworks/models/gpt-oss-120b" },
   xai: { type: "openai", baseUrl: "https://api.x.ai/v1", model: "grok-2-latest" },
   perplexity: { type: "openai", baseUrl: "https://api.perplexity.ai", model: "sonar" },
-  cohere: { type: "openai", baseUrl: "https://api.cohere.ai/compatibility/v1", model: "command-r" },
+  cohere: { type: "openai", baseUrl: "https://api.cohere.ai/compatibility/v1", model: "command-r-08-2024" },
+  minimax: { type: "openai", baseUrl: "https://api.minimax.io/v1", model: "MiniMax-M3" },
+  cerebras: { type: "openai", baseUrl: "https://api.cerebras.ai/v1", model: "gpt-oss-120b" },
+  sambanova: { type: "openai", baseUrl: "https://api.sambanova.ai/v1", model: "Meta-Llama-3.3-70B-Instruct" },
+  deepinfra: { type: "openai", baseUrl: "https://api.deepinfra.com/v1/openai", model: "meta-llama/Llama-3.3-70B-Instruct" },
   // Local Qwen3 on Intel Arc via IPEX-LLM's Ollama portable (OpenAI-compatible at :11434/v1). Offline,
   // credential-free — any VISHU_API_KEY value works (Ollama ignores it). See scripts/setup-intel-llm.ps1.
   intel: { type: "openai", baseUrl: "http://127.0.0.1:11434/v1", model: "qwen3:8b" },
+  // HuggingFace Inference-Providers router (OpenAI-compatible) — HF_TOKEN. Model must be a served id.
+  huggingface: { type: "openai", baseUrl: "https://router.huggingface.co/v1", model: "meta-llama/Llama-3.3-70B-Instruct" },
+  // Cloudflare Workers AI (OpenAI-compatible). {account_id} is interpolated from CLOUDFLARE_ACCOUNT_ID at
+  // discovery; without that env the provider is skipped (the URL can't resolve).
+  cloudflare: { type: "openai", baseUrl: "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1", model: "@cf/meta/llama-3.1-8b-instruct" },
 };
 
-/** Largest generally-available NVIDIA NIM model — the default "expert"/builder brain (decision
- * 2026-07-10: Anthropic keys are dead, so expert work runs on the biggest NIM model). Override with
- * JARVIS_BUILDER_MODEL for a coder-tuned or smaller NIM model. */
-const NIM_LARGE_MODEL = "meta/llama-3.1-405b-instruct";
+/** Largest NVIDIA NIM model that is actually GRANTED + responsive on this account — the default
+ * "expert"/builder brain (decision 2026-07-10: Anthropic keys are dead, so expert work runs on NIM).
+ * Verified live 2026-07-19: 405b/3.3-70b/nemotron-70b are 404/timeout on this key; 3.1-70b answers.
+ * Override with JARVIS_BUILDER_MODEL. When it does fail, the Router reroutes down NIM_FALLBACK_MODELS. */
+const NIM_LARGE_MODEL = "meta/llama-3.1-70b-instruct";
+
+/** Model reroute chain for NIM (verified responsive 2026-07-19). The Router walks this in order when the
+ * requested model times out / 5xxs / is gone (404/410). Env override: VISHU_MODEL_FALLBACKS (CSV). */
+const NIM_FALLBACK_MODELS = [
+  "meta/llama-3.1-70b-instruct",
+  "nvidia/llama-3.3-nemotron-super-49b-v1",
+  "meta/llama-3.1-8b-instruct",
+];
 
 /** Which model the "builder"/expert role runs. JARVIS_BUILDER_MODEL always wins; else, when the default
  * provider is NVIDIA NIM, the largest NIM model; else the provider's own model (nothing to upgrade to).
@@ -80,12 +108,28 @@ const NIM_LARGE_MODEL = "meta/llama-3.1-405b-instruct";
 export function resolveBuilderModel(env: NodeJS.ProcessEnv, provider: ProviderConfig): string {
   if (env.JARVIS_BUILDER_MODEL) return env.JARVIS_BUILDER_MODEL;
   const isNim = /nvidia|nim/i.test(provider.baseUrl);
-  return isNim ? NIM_LARGE_MODEL : provider.model;
+  if (!isNim) return provider.model; // nothing to upgrade to
+  return loadNimState(nimStateFile(env))?.builder ?? NIM_LARGE_MODEL; // weekly best-available, else safe default
 }
 
 /** Friendly preset names (gemini, nvidia, xai, …) — surfaced to the UI's provider/model switcher. */
 export function providerPresets(): { name: string; model: string }[] {
   return Object.entries(PRESETS).map(([name, p]) => ({ name, model: p.model }));
+}
+
+/** Resolve a provider name → its adapter type + endpoint + default model. Preset names (gemini/nvidia/…)
+ * carry their own; a bare adapter type (anthropic/openai/ollama) falls back to the type defaults. Used by
+ * the key registry to build a pool entry per discovered key without re-declaring endpoints. */
+export function providerBaseConfig(name: string): { type: ProviderType; baseUrl: string; model: string } {
+  const p = PRESETS[name];
+  if (p) return { type: p.type, baseUrl: p.baseUrl, model: p.model };
+  const type = (["mock", "openai", "anthropic", "ollama"].includes(name) ? name : "openai") as ProviderType;
+  return { type, baseUrl: DEFAULT_BASE_URL[type], model: DEFAULT_MODEL[type] };
+}
+
+/** Provider → its canonical env-var name (first ENV_KEYS entry wins, e.g. gemini → GEMINI_API_KEY). */
+export function providerEnvVar(provider: string): string | undefined {
+  return ENV_KEYS.find((e) => e.provider === provider)?.env;
 }
 
 /** Identify a provider from an API key's prefix — lets auto-detect recognise a key pasted straight into
@@ -120,6 +164,13 @@ const ENV_KEYS: { provider: string; env: string }[] = [
   { provider: "xai", env: "XAI_API_KEY" },
   { provider: "perplexity", env: "PERPLEXITY_API_KEY" },
   { provider: "cohere", env: "COHERE_API_KEY" },
+  { provider: "minimax", env: "MINIMAX_API_KEY" },
+  { provider: "cerebras", env: "CEREBRAS_API_KEY" },
+  { provider: "sambanova", env: "SAMBANOVA_API_KEY" },
+  { provider: "deepinfra", env: "DEEPINFRA_API_KEY" },
+  { provider: "huggingface", env: "HF_TOKEN" },
+  { provider: "huggingface", env: "HUGGINGFACE_API_KEY" },
+  { provider: "cloudflare", env: "CLOUDFLARE_API_TOKEN" },
 ];
 
 /** CSV or single value → trimmed list. Comma-separated = N keys for failover. */
@@ -161,12 +212,18 @@ export function resolveProvider(
     keyLabels.push((typeof e === "string" ? undefined : e.label) || defaultLabel(i));
   });
 
+  const baseUrl = env.VISHU_BASE_URL || file.provider?.baseUrl || preset?.baseUrl || DEFAULT_BASE_URL[type];
+  const envFallbacks = splitKeys(env.VISHU_MODEL_FALLBACKS);
+  const isNim = /nvidia|nim/i.test(baseUrl);
+  // Precedence: explicit env CSV > weekly auto-updated chain > hardcoded verified default.
+  const nimChain = isNim ? loadNimState(nimStateFile(env))?.fallbacks ?? NIM_FALLBACK_MODELS : undefined;
   return {
     type,
     model: env.VISHU_MODEL || file.provider?.model || preset?.model || DEFAULT_MODEL[type],
-    baseUrl: env.VISHU_BASE_URL || file.provider?.baseUrl || preset?.baseUrl || DEFAULT_BASE_URL[type],
+    baseUrl,
     apiKeys,
     keyLabels,
+    modelFallbacks: envFallbacks.length ? envFallbacks : nimChain,
   };
 }
 
@@ -210,10 +267,27 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): VishuConfig {
     throw new Error(`[config] invalid port: ${port}`);
   }
 
+  // Providers + roles: a config file (if it declares any) wins — the user pinned them by hand. Otherwise
+  // the KEY ASSIGNER auto-discovers every provider key present in the env and builds a ranked, tiered pool
+  // + per-task role assignments. This is what makes a newly-pasted key "just work": drop it in .env, and
+  // on next boot it joins the pool with no code change.
+  const fileHasPool = Object.keys(file.providers ?? {}).length > 0;
+  const discovered = fileHasPool ? [] : discoverProviders(env);
   const providers: Record<string, ProviderConfig> = {};
-  for (const [name, o] of Object.entries(file.providers ?? {})) providers[name] = providerFromObject(o);
+  if (fileHasPool) for (const [name, o] of Object.entries(file.providers!)) providers[name] = providerFromObject(o);
+  else Object.assign(providers, toPool(discovered));
+
+  // The default/fallback AI. An explicit pin (VISHU_PROVIDER / VISHU_API_KEY[S] / file.provider) always
+  // wins; otherwise the top-ranked discovered provider is the default so model/fallbackModel defaults track
+  // the best available AI (the pooled Router — not this single provider — drives dispatch when a pool exists).
+  // ponytail: the NIM per-model reroute chain is subsumed by cross-provider pool failover here.
+  const pinned = !!(env.VISHU_PROVIDER || env.VISHU_API_KEY || env.VISHU_API_KEYS || file.provider);
+  const top = discovered[0];
+  const provider = !pinned && top ? top.cfg : resolveProvider(env, file);
+
+  const roles = file.roles ?? (fileHasPool ? {} : assignRoles(discovered));
 
   const budgetUsd = env.VISHU_BUDGET_USD ? Number(env.VISHU_BUDGET_USD) : file.budgetUsd ?? 0;
 
-  return { paths, port, provider: resolveProvider(env, file), providers, roles: file.roles ?? {}, budgetUsd: budgetUsd > 0 ? budgetUsd : 0 };
+  return { paths, port, provider, providers, roles, budgetUsd: budgetUsd > 0 ? budgetUsd : 0 };
 }

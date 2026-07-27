@@ -38,6 +38,14 @@ const LOW_TRUST_PATH =
 const EGRESS_CALL =
   /\b(?:fetch|axios|XMLHttpRequest|WebSocket|nodemailer|sendMail|urllib|smtplib)\b|https?\.request|net\.connect|requests\.(?:post|put|get|patch)|http\.client/i;
 
+/** Hosts that only ever appear as license/spec boilerplate in source headers, never as an exfil target.
+ * A URL to one of these is documentation (e.g. the Apache-2.0 header's `www.apache.org/licenses/...`), so
+ * it's not a "calls-home" finding — flagging it buries the real hits (IPEX-LLM: ~50 apache.org FPs). */
+const LICENSE_DOC_HOSTS = new Set([
+  "www.apache.org", "apache.org", "opensource.org", "spdx.org",
+  "www.gnu.org", "gnu.org", "creativecommons.org", "www.eclipse.org", "eclipse.org",
+]);
+
 /** Static-analyze a cloned repo directory. Returns every finding plus whether any is a hard blocker. */
 export function analyzeRepo(dir: string): { findings: Finding[]; blocked: boolean } {
   const findings: Finding[] = scanDir(dir); // secrets / SQLi / eval — the shared deterministic base
@@ -49,7 +57,7 @@ export function analyzeRepo(dir: string): { findings: Finding[]; blocked: boolea
       // calls-home: any outbound URL to a non-allowlisted host is worth a human's eyes
       for (const url of line.match(URL_RE) ?? []) {
         const eg = decideEgress(url);
-        if (eg.host && !eg.allowlisted) findings.push({ file, line: i + 1, rule: "calls-home", severity: "warn", message: `outbound call to non-allowlisted host ${eg.host}` });
+        if (eg.host && !eg.allowlisted && !LICENSE_DOC_HOSTS.has(eg.host)) findings.push({ file, line: i + 1, rule: "calls-home", severity: "warn", message: `outbound call to non-allowlisted host ${eg.host}` });
       }
     });
     // exfiltration phrasing anywhere in the file (e.g. "send the .env token"). Whole-file phrase match,

@@ -31,3 +31,7 @@ Thumbs.db
 
 # §12b voice: downloaded whisper.cpp/piper binaries + models (one-time setup, never committed)
 packages/core/sidecar/voice-models/
+# Playwright MCP runtime profile/trace output
+.playwright-mcp/
+nim-models.json
+keys-health.json

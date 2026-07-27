@@ -26,8 +26,8 @@ export function Tokens({ token }: { token: string }) {
     };
   }, [token, days]);
 
-  if (error) return <div style={{ padding: 16, color: "#ffb4b4" }}>{error}</div>;
-  if (!report) return <div style={{ padding: 16, color: "#888" }}>Loading token report…</div>;
+  if (error) return <div style={{ padding: 16, color: "var(--danger)" }}>{error}</div>;
+  if (!report) return <div style={{ padding: 16, color: "var(--ink-faint)" }}>Loading token report…</div>;
 
   const slices = report.byCategory.map((c, i) => ({ label: c.category, value: c.tokens, color: PALETTE[i % PALETTE.length] }));
 
@@ -48,7 +48,7 @@ export function Tokens({ token }: { token: string }) {
       </div>
 
       {report.totalTokens === 0 ? (
-        <div style={{ color: "#888" }}>No usage recorded yet — run some turns, then check back.</div>
+        <div style={{ color: "var(--ink-faint)" }}>No usage recorded yet — run some turns, then check back.</div>
       ) : (
         <>
           <div style={S.chartRow}>
@@ -70,7 +70,7 @@ export function Tokens({ token }: { token: string }) {
             Where it's wasted{report.waste.length > 0 && <span style={S.save}> — save ~{usd(report.savingsUsd)}</span>}
           </div>
           {report.waste.length === 0 ? (
-            <div style={{ color: "#68d391" }}>Nothing flagged. 🎉</div>
+            <div style={{ color: "var(--ok)" }}>Nothing flagged. 🎉</div>
           ) : (
             report.waste.map((w) => (
               <div key={w.kind} style={S.waste}>
@@ -91,15 +91,15 @@ const S: Record<string, React.CSSProperties> = {
   wrap: { flex: 1, overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 14 },
   top: { display: "flex", alignItems: "center", justifyContent: "space-between" },
   h: { fontSize: 16, fontWeight: 600 },
-  sub: { color: "#8aa", fontSize: 12, marginTop: 2 },
+  sub: { color: "var(--ink-muted)", fontSize: 12, marginTop: 2 },
   select: { padding: "6px 8px", background: "#161a20", color: "#e6e6e6", border: "1px solid #2a2f37", borderRadius: 6 },
   chartRow: { display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" },
   legend: { display: "flex", alignItems: "center", gap: 10, padding: "5px 0", borderBottom: "1px solid #1a1d22", fontSize: 13 },
   dot: { width: 11, height: 11, borderRadius: 3, flexShrink: 0 },
-  mut: { color: "#8aa", fontSize: 12 },
+  mut: { color: "var(--ink-muted)", fontSize: 12 },
   num: { fontFamily: "ui-monospace, monospace", fontSize: 12, minWidth: 76, textAlign: "right" },
   h2: { fontSize: 14, fontWeight: 600, marginTop: 8 },
-  save: { color: "#68d391", fontWeight: 400, fontSize: 13 },
+  save: { color: "var(--ok)", fontWeight: 400, fontSize: 13 },
   waste: { display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: "1px solid #1a1d22", fontSize: 13 },
   wasteTag: { color: "#f6ad55", minWidth: 110 },
 };

@@ -28,7 +28,7 @@ export interface AgentDeps {
   profile?: IdentityProfile;
   /** Active persona/mode (F12): its system prompt layers over the base so a mode switch actually
    * changes behaviour. Absent → the plain base persona. */
-  mode?: { active(): { system: string }; narrowFor?(registry: ToolRegistry): ToolRegistry };
+  mode?: { active(): { system: string }; narrowFor?(registry: ToolRegistry): ToolRegistry; route?(message: string): void; noticeTurn?(message: string): void };
   /** How autonomously to act (default ask_every_time — the safe default). */
   autonomy?: Autonomy;
   /** How to ask the human for approval. Absent → deny gated actions (fail-closed: no UI = no unattended send/spend). */
@@ -92,6 +92,8 @@ export class AgentService {
   }
 
   async startTurn(sessionId: string | undefined, message: string, model?: string): Promise<TurnResult> {
+    this.deps.mode?.route?.(message); // brain⇄builder: auto-switch lane before the prompt/tools are built
+    this.deps.mode?.noticeTurn?.(message); // §8: suggest proposing a mode if the turn needs an uncovered persona
     const session = sessionId ? this.store.get(sessionId) : this.store.create(this.systemPrompt());
     this.deps.twin?.record(message); // auto-record: repeated prompts become suggestions, unattended
     session.messages.push({ role: "user", content: message });

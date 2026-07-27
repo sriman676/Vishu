@@ -120,6 +120,27 @@ export const voiceSttChunk = (token: string, sessionId: string, audioBase64: str
 export const voiceSttEnd = (token: string, sessionId: string) =>
   rpc<{ final: string }>(token, "vishu.voice_stt_end", { sessionId });
 
+// §9 "visualize" — read-only data-map + activity feed. Poll to refresh (snapshot-on-poll v1).
+export interface DataNode {
+  label: string;
+  path: string;
+  exists: boolean;
+  modified: number | null;
+  holds: string;
+}
+export interface ActivityEvent {
+  ts: number;
+  source: "model" | "gate" | "memory";
+  text: string;
+}
+export interface DashboardSnapshot {
+  dataMap: DataNode[];
+  activity: ActivityEvent[];
+}
+
+export const dashboardSnapshot = (token: string, limit = 40) =>
+  rpc<DashboardSnapshot>(token, "vishu.dashboard_snapshot", { limit });
+
 /** Subscribe to the core's SSE bus (tool:sync, notifications). Returns an unsubscribe. */
 export function subscribeEvents(token: string, onEvent: (e: unknown) => void): () => void {
   const es = new EventSource(`/events?token=${encodeURIComponent(token)}`);

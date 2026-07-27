@@ -1,15 +1,17 @@
-import { mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { registerAgent, registerAgentQueue } from "../agent/rpc.js";
 import { AgentQueue } from "../agent/queue.js";
 import { SessionStore } from "../agent/session.js";
-import { buildApp } from "../appbuilder/build.js";
+import { buildApp, writeBuildArtifacts } from "../appbuilder/build.js";
 import { formatFindings } from "../appbuilder/security.js";
 import { type AppSpec, type InterviewTurn, interviewStep, persistSpec, specToMarkdown } from "../appbuilder/spec.js";
 import { AgentService } from "../agent/service.js";
-import { loadConfig, providerPresets, resolveBuilderModel } from "../config/config.js";
+import { loadConfig, nimStateFile, providerPresets, resolveBuilderModel } from "../config/config.js";
+import { loadNimState, refreshNimModels } from "../providers/nimrefresh.js";
+import { type DiscoveredProvider, discoverProviders, keysHealthFile } from "../providers/registry.js";
 import { ok as okRpc } from "../transport/rpc.js";
 import { registerAutomation, registerAutofix } from "../automation/rpc.js";
 import { SchedulerGate } from "../automation/gate.js";
@@ -22,7 +24,8 @@ import { registerConnectors } from "../connectors/rpc.js";
 import { registerMeeting } from "../connectors/meeting.js";
 import { LocalConnector } from "../connectors/local.js";
 import { McpClient, type McpSampler, registerMcpTools } from "../connectors/mcp.js";
-import { DomainManager, loadDomains } from "../connectors/domains.js";
+import { DomainManager, KNOWN_MCP, type DomainConfig, loadDomains, resolveConnect, upsertDomain } from "../connectors/domains.js";
+import { loadRepoAdapters, registerAdapterTools, toDomainConfigs } from "../connectors/repoadapter.js";
 import { WebhookConnector } from "../connectors/webhook.js";
 import { StubMailConnector } from "../connectors/daily.js";
 import { GmailConnector } from "../connectors/gmail.js";
@@ -54,6 +57,9 @@ import { makeRunners } from "../eval/runners.js";
 import { BUILTIN_SUITE } from "../eval/suite.js";
 import { loadSweBenchLite, runSweBench } from "../eval/swebench.js";
 import { buildPoolRouter, buildRouter } from "../providers/factory.js";
+import { AnthropicProvider } from "../providers/anthropic.js";
+import { OpenAICompatibleProvider } from "../providers/openai.js";
+import { ProviderError } from "../providers/types.js";
 import { RunLog } from "../reliability/runlog.js";
 import { makeAsk, terminalPrompt } from "../reliability/ask.js";
 import { AuditLog } from "../security/audit.js";
@@ -76,6 +82,8 @@ import { ToolRegistry } from "../tools/registry.js";
 import { sandboxedTerminal } from "../tools/terminal.js";
 import { initToken } from "../transport/auth.js";
 import { registerUsage } from "../usage/rpc.js";
+import { registerDashboard } from "../dashboard/rpc.js";
+import { watchActivity } from "../dashboard/dashboard.js";
 import { BudgetWatcher } from "../usage/budget.js";
 import { UsageLog, readUsage } from "../usage/log.js";
 import { buildReport, renderReport } from "../usage/report.js";
@@ -121,6 +129,123 @@ async function connectMcpServers(tools: ToolRegistry, eventBus: typeof bus, samp
   }
 }
 
+/** `vishu connect <name>` — fold a downstream MCP into jarvis.domains.json so it auto-mounts (gated)
+ * next `vishu jarvis`. `<name>` from the curated KNOWN_MCP, or any custom server via `--cmd`/`--args`.
+ * `--list` shows what's connectable and what's already mounted. This is the single "connect to X" seam. */
+function connectCmd(argv: string[]): number {
+  const domainsFile = process.env.VISHU_DOMAINS_FILE || join(process.cwd(), "jarvis.domains.json");
+  const current = loadDomains(domainsFile);
+  const name = argv.find((a) => !a.startsWith("--"));
+  if (argv[0] === "--list" || !name) {
+    process.stdout.write(`known:   ${Object.keys(KNOWN_MCP).join(", ")}\n`);
+    process.stdout.write(current.length ? `mounted: ${current.map((d) => d.id).join(", ")}\n` : "mounted: (none)\n");
+    return 0;
+  }
+  const flag = (f: string): string | undefined => {
+    const i = argv.indexOf(f);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+  const cmdOv = flag("--cmd");
+  // Dynamic resolve: curated name → its MCP; --cmd → any custom MCP; anything else → the universal
+  // Composio mount (1000+ apps, one key, no per-app package/lag) instead of erroring. "Say an app, it connects."
+  const composioFallback = !KNOWN_MCP[name] && !cmdOv;
+  let cfg: DomainConfig;
+  if (cmdOv) {
+    const known = KNOWN_MCP[name];
+    cfg = known ? { ...known, cmd: cmdOv } : { id: name, cmd: cmdOv };
+  } else cfg = resolveConnect(name).cfg;
+  const argsOv = flag("--args");
+  if (argsOv) {
+    try {
+      cfg.args = JSON.parse(argsOv) as string[];
+    } catch {
+      return usageErr("--args must be a JSON array, e.g. --args '[\"-m\",\"server\"]'");
+    }
+  }
+  const cwdOv = flag("--cwd");
+  if (cwdOv) cfg.cwd = resolve(cwdOv);
+  writeFileSync(domainsFile, `${JSON.stringify({ domains: upsertDomain(current, cfg) }, null, 2)}\n`);
+  const note = composioFallback
+    ? `\n"${name}" routes through Composio — set COMPOSIO_API_KEY and authorize ${name} there; its tools appear as composio__*.`
+    : "";
+  process.stdout.write(
+    `connected ${cfg.id} -> ${domainsFile}\nmounts on next 'vishu jarvis'${cfg.requireEnv ? ` (set ${cfg.requireEnv} first)` : ""}${note}\n`,
+  );
+  return 0;
+}
+
+/** `vishu models refresh` — probe the live NIM catalogue, keep only models that actually answer, rank by
+ * params, and persist the best-available builder + fallback chain (read by config at next start). Wire it
+ * to a weekly trigger (or a Windows scheduled task) so the PA auto-promotes to the top model NIM serves. */
+async function modelsCmd(argv: string[]): Promise<number> {
+  const key = process.env.NVIDIA_API_KEY || (process.env.VISHU_API_KEY?.startsWith("nvapi-") ? process.env.VISHU_API_KEY : "");
+  if (!key) return usageErr("vishu models refresh needs a NIM key (NVIDIA_API_KEY or VISHU_API_KEY = nvapi-…)");
+  if (argv[0] && argv[0] !== "refresh") return usageErr("vishu models refresh");
+  const file = nimStateFile();
+  process.stdout.write("probing NIM catalogue for the best available models…\n");
+  const s = await refreshNimModels(key, file);
+  process.stdout.write(`builder:   ${s.builder}\nfallbacks: ${s.fallbacks.join(", ")}\nwritten -> ${file}\n`);
+  return 0;
+}
+
+/** True liveness probe: a real 1-token chat with the provider's CONFIGURED model — the only test that
+ * reflects what PA actually calls (a valid key whose default model 404s, or an unfunded 402 account, is
+ * useless to PA and reads dead). Returns true = answered; false = definitively unusable (401/402/404/400);
+ * undefined = inconclusive (429/5xx transient, or local) → left in the pool. A /models check can't see
+ * credit/model-access, so it wrongly passed unfunded and wrong-model keys — this doesn't. */
+async function probeProvider(cfg: DiscoveredProvider["cfg"]): Promise<boolean | undefined> {
+  if (cfg.type === "ollama") return undefined; // on-device; assumed up, no network probe
+  const apiKey = cfg.apiKeys[0];
+  if (!apiKey) return undefined;
+  const prov =
+    cfg.type === "anthropic"
+      ? new AnthropicProvider({ name: "probe", baseUrl: cfg.baseUrl, apiKey })
+      : new OpenAICompatibleProvider({ name: "probe", baseUrl: cfg.baseUrl, apiKey });
+  try {
+    await prov.chat({ model: cfg.model, messages: [{ role: "user", content: "hi" }], maxTokens: 1, category: "probe" });
+    return true;
+  } catch (e) {
+    return e instanceof ProviderError && e.transient ? undefined : false; // transient → keep; else dead
+  }
+}
+
+/** `vishu keys` — show the assigner's pool: every provider key discovered in the env, its tier, model, key
+ * count, and which roles it's assigned. `vishu keys --probe` pings each and writes keys-health.json so dead
+ * keys drop out of routing. This is the visible surface of the deterministic key assigner. */
+async function keysCmd(argv: string[]): Promise<number> {
+  if (argv[0] && argv[0] !== "--probe") return usageErr("vishu keys [--probe]");
+  const config = loadConfig();
+  const list = discoverProviders();
+  if (!list.length) {
+    process.stdout.write("no provider keys found. add one to the workspace .env (e.g. MINIMAX_API_KEY=…) and PA will use it.\n");
+    return 0;
+  }
+  const rolesFor = (name: string) => Object.entries(config.roles).filter(([, p]) => p === name).map(([r]) => r);
+
+  if (argv[0] === "--probe") {
+    process.stdout.write("probing providers for liveness…\n");
+    const providers: Record<string, { ok: boolean; ts: string }> = {};
+    for (const p of list) {
+      const ok = await probeProvider(p.cfg);
+      process.stdout.write(`  ${p.name.padEnd(12)} ${ok === true ? "alive" : ok === false ? "DEAD" : "skip"}\n`);
+      if (ok !== undefined) providers[p.name] = { ok, ts: new Date().toISOString() };
+    }
+    const file = keysHealthFile();
+    writeFileSync(file, JSON.stringify({ providers }, null, 2));
+    process.stdout.write(`written -> ${file}\n`);
+    return 0;
+  }
+
+  process.stdout.write(`${list.length} provider(s) available, best-first:\n`);
+  for (const p of list) {
+    const roles = rolesFor(p.name);
+    const keys = `${p.keyCount} key${p.keyCount === 1 ? "" : "s"}`;
+    process.stdout.write(`  ${p.name.padEnd(12)} ${p.tier.padEnd(8)} ${keys.padEnd(7)} ${p.cfg.model}${roles.length ? `  → ${roles.join(", ")}` : ""}\n`);
+  }
+  process.stdout.write("run `vishu keys --probe` to health-check and drop dead keys from routing.\n");
+  return 0;
+}
+
 /** Outbound webhook channels declared in VISHU_WEBHOOKS (JSON: {"channel":"https://hook"}). */
 function parseWebhooks(env = process.env): Record<string, string> {
   if (!env.VISHU_WEBHOOKS) return {};
@@ -143,7 +268,26 @@ function usageLog(config: ReturnType<typeof loadConfig>): UsageLog {
   return new UsageLog(join(config.paths.workspaceDir, "usage.jsonl"));
 }
 
+/** Weekly best-available NIM auto-update: on boot, if the persisted chain is missing or >7 days old,
+ * re-probe the catalogue and pick the top models NIM actually serves. Staleness-gated (cheap when fresh),
+ * best-effort (a failed probe keeps the last good chain). The always-on host restart-loop makes "weekly"
+ * real without a separate scheduler. Runs before loadConfig so the fresh chain feeds this boot. */
+async function maybeRefreshNimWeekly(): Promise<void> {
+  const key = process.env.NVIDIA_API_KEY || (process.env.VISHU_API_KEY?.startsWith("nvapi-") ? process.env.VISHU_API_KEY : "");
+  if (!key) return;
+  const file = nimStateFile();
+  const st = loadNimState(file);
+  if (st && Date.now() - st.ts < 7 * 24 * 60 * 60 * 1000) return; // fresh enough
+  try {
+    const s = await refreshNimModels(key, file);
+    process.stdout.write(`[models] weekly NIM refresh → builder=${s.builder}\n`);
+  } catch {
+    /* best-effort — keep the last good chain */
+  }
+}
+
 async function serve(): Promise<number> {
+  await maybeRefreshNimWeekly();
   const config = loadConfig();
   initToken(config.paths.workspaceDir);
   mkdirSync(config.paths.actionDir, { recursive: true });
@@ -184,6 +328,9 @@ async function serve(): Promise<number> {
   );
   registerMemory(registry, memory);
   registerUsage(registry, config.paths.workspaceDir);
+  registerDashboard(registry, config.paths); // §9 "visualize" — read-only data-map + activity feed
+  // §9 live push: an activity-log change publishes a bus event (forwarded over SSE) so the UI refreshes now.
+  watchActivity(config.paths.workspaceDir, () => bus.publish({ domain: "dashboard", type: "changed", payload: {} }));
   registerAudit(registry); // vishu.audit_verify — tamper-check the hash-chained decision log (default file)
   registerReasoningTools(tools, { router, model: config.provider.model });
   registerReasoning(registry, { router, model: config.provider.model });
@@ -226,11 +373,18 @@ async function serve(): Promise<number> {
   // `ask`/`audit` gate. `create_agent` gates registration; approved agents persist in agents.json and
   // become routable by the `dispatch` tool (Phase 1 Step 5 loop closure).
   const factory = new AgentFactory(tools, skills, { ask, audit, storePath: join(config.paths.workspaceDir, "agents.json") });
-  registerOrchestrationTools(tools, { roles, model: config.provider.model, factory });
   // F12 personas/modes: one ModeManager sharing the runtime ask/audit gate. mode_propose gates NEW modes
   // (change_setting); approved ones persist to modes.json + hot-load. The active mode's prompt layers
-  // into the agent's system prompt (below), so a switch actually changes behaviour.
-  const modes = new ModeManager({ ask, audit, storePath: join(config.paths.workspaceDir, "modes.json") });
+  // into the agent's system prompt (below), so a switch actually changes behaviour. Built before the
+  // orchestration tools so `dispatch` can route a persona request to a mode switch (Phase-4 mode arm).
+  const modes = new ModeManager({
+    ask,
+    audit,
+    storePath: join(config.paths.workspaceDir, "modes.json"),
+    // §8 auto-detect: surface a "propose a mode for this?" suggestion on the bus (never auto-activates).
+    onSuggestMode: (need) => bus.publish({ domain: "modes", type: "suggest_mode", payload: { need } }),
+  });
+  registerOrchestrationTools(tools, { roles, model: config.provider.model, factory, modes });
   registerModeTools(tools, modes);
   registerModeRpc(registry, modes); // web UI persona switcher + per-mode voiceId (§8)
   // §8: scope agent memory write+recall to the active mode's folder (registered here — after `modes` exists).
@@ -350,8 +504,14 @@ async function serve(): Promise<number> {
   // Phase 1 Step 3: attach external domain services (JobAutomation, …) from jarvis.domains.json as
   // namespaced `<id>__*` tool sets, each domain's declared action classes reaching the F0 gate.
   const domainsFile = process.env.VISHU_DOMAINS_FILE || join(process.cwd(), "jarvis.domains.json");
-  const domainTools = await new DomainManager(loadDomains(domainsFile), tools, { bus, sampler }).start();
-  if (domainTools.length) process.stdout.write(`[domains] ${domainTools.length} tool(s): ${domainTools.join(", ")}\n`);
+  // Phase 2.3 F2: also discover per-repo adapters under integrations/<name>/jarvis-adapter.json. MCP-kind
+  // adapters merge into the DomainManager (same mount path); CLI/data-kind register as namespaced tools.
+  const integrationsDir = process.env.VISHU_INTEGRATIONS_DIR || join(process.cwd(), "..", "integrations");
+  const adapters = loadRepoAdapters(integrationsDir);
+  const domainTools = await new DomainManager([...loadDomains(domainsFile), ...toDomainConfigs(adapters)], tools, { bus, sampler }).start();
+  const adapterTools = registerAdapterTools(tools, adapters);
+  const attached = [...domainTools, ...adapterTools];
+  if (attached.length) process.stdout.write(`[domains] ${attached.length} tool(s): ${attached.join(", ")}\n`);
 
   // Phase 12: optional modules — off by default, enabled by VISHU_MODULES; core is unaffected when off.
   const modulesOn = await loadModules(MODULES, { tools, rpc: registry, bus, workspaceDir: config.paths.workspaceDir });
@@ -461,6 +621,7 @@ async function build(goal: string): Promise<number> {
       spec,
     );
 
+    const artifacts = writeBuildArtifacts(config.paths.actionDir, report);
     process.stdout.write(
       [
         "",
@@ -468,6 +629,9 @@ async function build(goal: string): Promise<number> {
         `security: ${formatFindings(report.findings)}`,
         `gate: ${report.gate.ok ? "pass" : report.gate.issues.join("; ")}`,
         `owasp review (advisory): ${report.review || "none"}`,
+        `app + artifacts: ${config.paths.actionDir}`,
+        `  architecture: ${artifacts.architecture}`,
+        `  pentest report: ${artifacts.pentest}`,
         "",
       ].join("\n"),
     );
@@ -614,6 +778,14 @@ async function main(argv: string[]): Promise<number> {
   } catch {
     /* no .env file — fall back to the ambient environment */
   }
+  // Then fold in the shared workspace .env one level up (D:\Job Project\.env) — the single source of truth
+  // for all provider keys the key assigner discovers. loadEnvFile does NOT overwrite already-set vars, so
+  // the local .env above still wins; this only fills gaps. Missing → ignored (local/ambient env is enough).
+  try {
+    process.loadEnvFile(join(process.cwd(), "..", ".env"));
+  } catch {
+    /* no shared root .env — local/ambient env is enough */
+  }
   const cmd = argv[0];
 
   if (cmd === "--version" || cmd === "-v") {
@@ -680,6 +852,9 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(`${remove ? "untrusted" : "trusted"} ${dir}\n${next.length} trusted repo(s)\n`);
     return 0;
   }
+  if (cmd === "models") return modelsCmd(argv.slice(1));
+  if (cmd === "keys") return keysCmd(argv.slice(1));
+  if (cmd === "connect") return connectCmd(argv.slice(1));
   if (cmd === "mcp-serve") return mcpServe(argv.slice(1));
   if (cmd === "report") return report(argv[1]);
   if (cmd === "ledger") return ledger(argv[1]);
@@ -711,7 +886,9 @@ async function main(argv: string[]): Promise<number> {
       "  vishu eval [runner]          run the eval suite (baseline|effort|moa) + track quality over time",
       "  vishu eval swebench [--limit N] [--file f] [--out p]   SWE-bench Lite: write predictions.jsonl",
       "  vishu rpc <method> [json]    call a method on a running core",
+      "  vishu connect <name> [--list]  mount a downstream MCP (browser|github|composio|custom) into the gateway",
       "  vishu mcp-serve [--http [port]]  expose Vishu's tools as an MCP server (stdio, or HTTP :8848)",
+      "  vishu keys [--probe]         show the discovered provider-key pool + tier routing (probe = liveness)",
       "",
     ].join("\n"),
   );

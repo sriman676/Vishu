@@ -1,3 +1,4 @@
+import { isQwen3, stripThink, withNoThink } from "./qwen3.js";
 import { statusError } from "./transient.js";
 import type { ChatRequest, ChatResponse, OnDelta, Provider, ToolCall } from "./types.js";
 
@@ -15,13 +16,20 @@ export class OllamaProvider implements Provider {
   }
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
+    // Qwen3 defaults to a <think> block (slow, token-wasteful on the cheap local lane). Suppress it
+    // both ways: /no_think prompt token + Ollama's native `think:false` field. ponytail: no-op on the
+    // Thinking-only finetunes (Qwen3-*-Thinking-2507 hardcode <think> in their template); use a hybrid
+    // or Instruct model to get the win.
+    const qwen = isQwen3(req.model);
+    const messages = qwen ? withNoThink(req.messages) : req.messages;
     const res = await fetch(`${this.cfg.baseUrl}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         model: req.model,
         stream: false,
-        messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
+        ...(qwen ? { think: false } : {}),
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
         tools: req.tools?.map((t) => ({ type: "function", function: t })),
       }),
     });
@@ -37,8 +45,9 @@ export class OllamaProvider implements Provider {
       name: c.function.name,
       arguments: c.function.arguments,
     }));
+    const raw = json.message?.content ?? "";
     return {
-      content: json.message?.content ?? "",
+      content: qwen ? stripThink(raw) : raw,
       toolCalls: toolCalls?.length ? toolCalls : undefined,
       finish: toolCalls?.length ? "tool_calls" : "stop",
       usage:

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { egressAllowlist } from "../security/policy.js";
 import { ToolRegistry } from "../tools/registry.js";
-import { DomainManager, loadDomains } from "./domains.js";
+import { DomainManager, KNOWN_MCP, loadDomains, upsertDomain } from "./domains.js";
 
 /** A minimal stdio MCP server named "careerops" exposing one `add` tool. */
 const STUB = `
@@ -100,6 +100,23 @@ test("DomainManager: a requireEnv domain stays inert until its key is set (§11c
     dm.stop();
     delete process.env.TEST_COMPOSIO_KEY;
   }
+});
+
+test("upsertDomain: appends a new id, replaces an existing one (idempotent connect)", () => {
+  const a = { id: "browser", cmd: "npx" };
+  const b = { id: "github", cmd: "npx" };
+  assert.deepEqual(upsertDomain([a], b).map((d) => d.id), ["browser", "github"]); // new id appended
+  const replaced = upsertDomain([a, b], { id: "browser", cmd: "other" });
+  assert.deepEqual(replaced.map((d) => d.id), ["github", "browser"]); // same id replaced, not duplicated
+  assert.equal(replaced.find((d) => d.id === "browser")?.cmd, "other"); // with the new config
+});
+
+test("KNOWN_MCP: the browser server gates outward clicks/typing but lets navigation read", () => {
+  const b = KNOWN_MCP.browser;
+  assert.equal(b?.actions?.browser_click, "send"); // an outward click is gated
+  assert.equal(b?.actions?.browser_type, "send"); // typing/filling is gated
+  assert.equal(b?.actions?.browser_run_code_unsafe, "change_setting"); // arbitrary code must never auto-run
+  assert.equal(b?.actions?.["*"], "read"); // navigate/snapshot default to read (auto)
 });
 
 test("loadDomains: parses the domains array, returns [] when the file is missing/invalid", () => {

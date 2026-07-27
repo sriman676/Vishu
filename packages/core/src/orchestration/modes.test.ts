@@ -4,13 +4,34 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ToolRegistry } from "../tools/registry.js";
-import { MODES, ModeManager, proposeMode } from "./modes.js";
+import { detectUncoveredNeed, MODES, ModeManager, proposeMode } from "./modes.js";
 
 function stubRegistry(...names: string[]): ToolRegistry {
   const r = new ToolRegistry();
   for (const name of names) r.register({ name, description: name, parameters: { type: "object", properties: {} }, run: async () => "" });
   return r;
 }
+
+test("detectUncoveredNeed: suggests only for an uncovered persona, silent otherwise", () => {
+  const modes = Object.values(MODES);
+  // covered by the interviewer mode → no suggestion
+  assert.equal(detectUncoveredNeed("act as an interviewer for me", modes), undefined);
+  // plain request, no persona cue → no suggestion
+  assert.equal(detectUncoveredNeed("what's the weather today", modes), undefined);
+  // explicit cue for a role no mode covers → returns the role to propose
+  assert.equal(detectUncoveredNeed("be my fitness coach", modes), "fitness");
+  assert.equal(detectUncoveredNeed("switch to lawyer mode", modes), "lawyer");
+});
+
+test("noticeTurn fires onSuggestMode once per distinct uncovered need", () => {
+  const seen: string[] = [];
+  const m = new ModeManager({ onSuggestMode: (need) => seen.push(need) });
+  m.noticeTurn("be my fitness coach");
+  m.noticeTurn("be my fitness coach"); // same need → not re-fired
+  m.noticeTurn("act as a teacher"); // covered → no fire
+  m.noticeTurn("switch to lawyer mode");
+  assert.deepEqual(seen, ["fitness", "lawyer"]);
+});
 
 test("mode manager: starts in pa-master and lists the four predefined modes", () => {
   const m = new ModeManager();

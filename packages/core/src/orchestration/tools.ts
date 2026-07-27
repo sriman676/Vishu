@@ -2,8 +2,10 @@ import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext } from "../tools/types.js";
 import { makeToolRunner, parseSpec, runDag } from "./dag.js";
 import { Coordinator } from "./coordinator.js";
+import { classifyExecution, classifyLane } from "./lane.js";
 import { mergedDiffStat } from "./subagent.js";
 import type { AgentFactory } from "./factory.js";
+import type { ModeManager } from "./modes.js";
 import type { RoleRegistry } from "./roles.js";
 
 /** Expose orchestration as a tool so the main agent can fan a goal out to subagents. The coder
@@ -11,7 +13,7 @@ import type { RoleRegistry } from "./roles.js";
  * Branch building dispatches through the "builder" role, so a configured builder-AI is used when set.
  * When a `factory` is supplied, `create_agent` (gated) and `dispatch` (route+run one task) close the
  * Step 5 loop: a bespoke agent can be built at runtime and then routed to by name. */
-export function registerOrchestrationTools(registry: ToolRegistry, deps: { roles: RoleRegistry; model: string; factory?: AgentFactory }): void {
+export function registerOrchestrationTools(registry: ToolRegistry, deps: { roles: RoleRegistry; model: string; factory?: AgentFactory; modes?: ModeManager }): void {
   const coordinator = (ctx: ToolContext) =>
     new Coordinator({
       router: deps.roles.for("builder"),
@@ -20,6 +22,7 @@ export function registerOrchestrationTools(registry: ToolRegistry, deps: { roles
       parentRegistry: registry,
       repoDir: ctx.policy.actionDir,
       factory: deps.factory,
+      modes: deps.modes, // dispatch can route a persona request to a mode switch (Phase-4 mode arm)
       ask: ctx.ask, // a dispatched/orchestrated subagent can now request approval, not just deny
     });
 
@@ -42,6 +45,20 @@ export function registerOrchestrationTools(registry: ToolRegistry, deps: { roles
       // commit/push that leaves the sandbox is the gated step (dev_commit = write, dev_push = send/ask).
       if (!result.merged) return result.final;
       return `${result.final}\n\nHarvested into the sandbox — review this diff, then land it with the gated dev_commit / dev_push:\n${mergedDiffStat(ctx.policy.actionDir)}`;
+    },
+  });
+
+  registry.register({
+    name: "route_task",
+    meta: { action: "read" },
+    description:
+      "Decide where a task should run BEFORE acting: which lane (brain=PA/ops, builder=engineering) and whether it fits the LOCAL small model (private/cheap/short) or needs the CLOUD (hard reasoning/coding/long). Under privacy-strict, personal-data tasks force local. Call this to keep private work off cloud prompts and cheap work off the premium quota.",
+    parameters: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
+    run: async (args) => {
+      const task = String(args.task ?? "");
+      const lane = classifyLane(task);
+      const exec = classifyExecution(task);
+      return `lane=${lane}, execution=${exec}${exec === "local" ? " (keep on the local model — private/cheap)" : " (route to cloud — needs capability)"}.`;
     },
   });
 
@@ -134,7 +151,7 @@ export function registerOrchestrationTools(registry: ToolRegistry, deps: { roles
     // Routing/delegation is a write; the dispatched subagent gates its own side effects. Explicit so the
     // name heuristic (which reads "dispatch" as send) doesn't force a spurious prompt on every route.
     meta: { action: "write" },
-    description: "Route ONE task to the best executor — an approved bespoke agent (named in the task), a preset role, or a synthesized agent — and run it. A too-vague task returns a clarifying question.",
+    description: "Route ONE task to the best executor — an approved bespoke agent (named in the task), a preset role, a synthesized agent, or a persona-mode switch (e.g. \"interview me\" → interviewer mode) — and run it. A too-vague task returns a clarifying question.",
     parameters: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
     run: async (args, ctx) => coordinator(ctx).dispatchAndRun(String(args.task ?? "")),
   });

@@ -7,6 +7,7 @@ import { ok, type Registry } from "../transport/rpc.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext } from "../tools/types.js";
 import { narrowRegistry } from "./archetypes.js";
+import { routeAndActivate } from "./lane.js";
 
 /** A Mode/mood: a persona the WHOLE agent switches into. Unlike an Archetype (a subagent role), a Mode
  * reshapes the main agent's surface — its system prompt, the tool subset it may use, the memory folder it
@@ -79,6 +80,36 @@ export function proposeMode(name: string, need: string): Mode {
   };
 }
 
+// §8 auto-detect "no mode covers this need". Conservative: fires only on explicit persona-request phrasing.
+const PERSONA_CUES = [
+  /\b(?:act as|be my|become my|as my)\s+(?:an?\s+)?([a-z][a-z -]{2,30}?)(?:\s+(?:mode|persona|assistant|coach|expert|advisor))?\b/i,
+  /\bi need (?:an?\s+)?([a-z][a-z -]{2,30}?)\s+(?:mode|persona|coach|expert|advisor|assistant)\b/i,
+  /\b(?:switch to|enter)\s+(?:an?\s+)?([a-z][a-z -]{2,30}?)\s+mode\b/i,
+];
+const STOP = new Set(["the", "a", "an", "my", "your", "for", "and", "help", "please", "personal", "good"]);
+const sig = (s: string): string[] => (s.toLowerCase().match(/[a-z]{3,}/g) ?? []).filter((w) => !STOP.has(w));
+
+/** Does the message explicitly ask for a persona/role no existing mode covers? Returns the requested role
+ * to propose, or undefined. Ceiling is an LLM classifier for subtler "no mode fits" cases; this is the
+ * cheap deterministic floor. Never activates — the caller only SUGGESTS proposing a mode. */
+export function detectUncoveredNeed(message: string, modes: Mode[]): string | undefined {
+  let role: string | undefined;
+  for (const re of PERSONA_CUES) {
+    const m = re.exec(message);
+    if (m?.[1]) {
+      role = m[1].trim();
+      break;
+    }
+  }
+  const roleWords = role ? sig(role) : [];
+  if (roleWords.length === 0) return undefined;
+  const covered = modes.some((mode) => {
+    const words = new Set([...sig(mode.name), ...sig(mode.memoryFolder), ...sig(mode.system.split("\n")[0] ?? "")]);
+    return roleWords.some((w) => words.has(w));
+  });
+  return covered ? undefined : role;
+}
+
 /** Runtime persona switcher. Predefined modes live in code; custom (auto-created) modes are gated behind
  * the F0 change_setting gate, then persisted (modes.json) and hot-loaded so they run without a restart —
  * the same gate+store discipline as AgentFactory. Detection of "no mode covers this need" is left to the
@@ -88,7 +119,17 @@ export class ModeManager {
   private activeName = DEFAULT_MODE;
   private readonly gate: ApprovalGate;
 
-  constructor(private readonly opts: { ask?: AskFn; audit?: AuditLog; storePath?: string; runLog?: RunLog } = {}) {
+  private lastSuggested = "";
+  constructor(
+    private readonly opts: {
+      ask?: AskFn;
+      audit?: AuditLog;
+      storePath?: string;
+      runLog?: RunLog;
+      /** §8: notified with a role phrase when a turn asks for a persona no mode covers (suggest, don't act). */
+      onSuggestMode?: (need: string) => void;
+    } = {},
+  ) {
     for (const [name, mode] of Object.entries(MODES)) this.modes.set(name, mode);
     // Registering a NEW mode is a change_setting → always asks, is pause-denied, and audited.
     this.gate = new ApprovalGate("automatic", opts.ask ?? (async () => false), { actionOf: () => "change_setting", audit: opts.audit });
@@ -122,6 +163,22 @@ export class ModeManager {
     this.activeName = name;
     this.opts.runLog?.log("mode_activated", name);
     return { activated: true };
+  }
+
+  /** Brain⇄builder auto-route: classify a message and switch 100% into that lane's mode. */
+  route(message: string): void {
+    routeAndActivate(this, message);
+  }
+
+  /** §8 auto-detect: if this turn explicitly asks for a persona no mode covers, suggest proposing one
+   * (fires onSuggestMode once per distinct need). Never activates — propose, don't act. */
+  noticeTurn(message: string): void {
+    const need = detectUncoveredNeed(message, this.list());
+    if (need && need !== this.lastSuggested) {
+      this.lastSuggested = need;
+      this.opts.runLog?.log("mode_suggest", need);
+      this.opts.onSuggestMode?.(need);
+    }
   }
 
   /** Draft a new mode from a described need (inert until registered). */
@@ -183,6 +240,18 @@ export function registerModeTools(registry: ToolRegistry, modes: ModeManager): v
         .list()
         .map((m) => `${m.name === active ? "* " : "- "}${m.name} — ${m.tools === "inherit" ? "all tools" : `${m.tools.length} tool(s)`}, memory:${m.memoryFolder}${m.voiceId ? `, voice:${m.voiceId}` : ""}`)
         .join("\n");
+    },
+  });
+
+  registry.register({
+    name: "auto_mode",
+    meta: { action: "write" },
+    description:
+      "Brain⇄builder router: read a request and switch the agent 100% into the lane it needs — PA/ops → pa-master (brain), engineering → co-founder (builder). Call at the start of a turn to auto-pick the persona.",
+    parameters: { type: "object", properties: { request: { type: "string" } }, required: ["request"] },
+    run: async (args) => {
+      const r = routeAndActivate(modes, String(args.request ?? ""));
+      return `lane=${r.lane} -> ${r.mode} mode${r.activated ? "" : " (activate failed)"}.`;
     },
   });
 
