@@ -1,3 +1,4 @@
+import { memoryWorkers, runWorkers } from "../automation/workers.js";
 import { err, ok, type Registry } from "../transport/rpc.js";
 import { rollupSession, selfHealMemory } from "./rollup.js";
 import type { MemoryStore } from "./store.js";
@@ -30,4 +31,8 @@ export function registerMemory(registry: Registry, store: MemoryStore): void {
     const p = (params ?? {}) as { olderThanDays?: number; resolveConflicts?: boolean };
     return ok(selfHealMemory(store, { olderThanDays: p.olderThanDays, resolveConflicts: p.resolveConflicts }));
   });
+
+  // Run the background maintenance workers (janitor/distiller/curator) on demand; each is isolated so
+  // one failure can't abort the batch. Returns per-worker one-line summaries.
+  registry.register("vishu.workers_run", async () => ok(await runWorkers(memoryWorkers(store))));
 }
