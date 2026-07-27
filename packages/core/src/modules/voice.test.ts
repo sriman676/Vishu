@@ -98,3 +98,40 @@ test("§12b voice RPC: transcribe (base64→whisper) and speak (piper→base64) 
     else process.env.VISHU_TTS_CMD = prevT;
   }
 });
+
+// A long-lived node stub for the streaming STT sidecar: loops over stdin lines, echoes a partial per
+// chunk, and on {"final":true} emits a final line then exits — mirroring whisper_stream.py's contract.
+const STREAM_STUB = `let b="";process.stdin.on("data",d=>{b+=d;let i;while((i=b.indexOf("\\n"))>=0){const line=b.slice(0,i).trim();b=b.slice(i+1);if(!line)continue;const r=JSON.parse(line);if(r.final){process.stdout.write(JSON.stringify({final:"final text"})+"\\n");process.exit(0)}else{process.stdout.write(JSON.stringify({partial:"heard:"+r.audio_path,engine:"stub"})+"\\n")}}});`;
+
+test("§12b streaming STT: start → chunk(partial) → end(final) over one warm sidecar session", async () => {
+  const prev = process.env.VISHU_STT_STREAM_CMD;
+  try {
+    const rpc = new Registry();
+    const c = { tools: new ToolRegistry(), rpc, bus: new EventBus(), workspaceDir: "." };
+    await loadModules(MODULES, c, enabledModules({ VISHU_MODULES: "voice" }));
+    const call = (method: string, params: unknown) => rpc.handle({ jsonrpc: "2.0", id: 1, method, params });
+    process.env.VISHU_STT_STREAM_CMD = JSON.stringify(["node", "-e", STREAM_STUB]);
+
+    const started = await call("vishu.voice_stt_start", {});
+    assert.equal(started.result?.ok, true);
+    const sessionId = (started.result as { result: { sessionId: string } }).result.sessionId;
+    assert.ok(sessionId);
+
+    const wav = Buffer.from("wavbytes").toString("base64");
+    const chunk = await call("vishu.voice_stt_chunk", { sessionId, audio_base64: wav });
+    assert.equal(chunk.result?.ok, true);
+    assert.match((chunk.result as { result: { partial: string } }).result.partial, /^heard:.*in\.wav$/);
+
+    const ended = await call("vishu.voice_stt_end", { sessionId });
+    assert.equal(ended.result?.ok, true);
+    assert.equal((ended.result as { result: { final: string } }).result.final, "final text");
+
+    // The session is torn down after end → a chunk on it is rejected, and a stray end is idempotent.
+    assert.equal((await call("vishu.voice_stt_chunk", { sessionId, audio_base64: wav })).result?.ok, false);
+    assert.equal((await call("vishu.voice_stt_end", { sessionId })).result?.ok, true);
+    assert.equal((await call("vishu.voice_stt_chunk", { audio_base64: wav })).result?.ok, false); // no session id
+  } finally {
+    if (prev === undefined) delete process.env.VISHU_STT_STREAM_CMD;
+    else process.env.VISHU_STT_STREAM_CMD = prev;
+  }
+});

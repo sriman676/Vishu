@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
@@ -39,6 +40,59 @@ export async function callSidecar(argv: string[], request: unknown, timeoutMs = 
   });
 }
 
+export interface SidecarStream {
+  /** Send one request line and resolve with the sidecar's next response line (FIFO 1:1). */
+  send(request: unknown): Promise<Record<string, unknown>>;
+  /** End stdin and kill the child. Safe to call more than once. */
+  close(): void;
+}
+
+/** Spawn a LONG-LIVED sidecar and drive it with many request/response turns over the same stdio-JSON
+ * seam (vs callSidecar's one-shot). Responses are line-buffered and matched to pending requests in FIFO
+ * order — the streaming STT protocol is strictly one response per request line. Injectable argv so it
+ * unit-tests against a node stub without Python/whisper installed. */
+export function callSidecarStream(argv: string[]): SidecarStream {
+  const p = spawn(argv[0]!, argv.slice(1));
+  const waiters: Array<{ resolve: (v: Record<string, unknown>) => void; reject: (e: Error) => void }> = [];
+  let buf = "";
+  const failAll = (e: Error) => {
+    while (waiters.length) waiters.shift()!.reject(e);
+  };
+  p.stdout.on("data", (d) => {
+    buf += d;
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      const w = waiters.shift();
+      if (!w) continue; // an unsolicited line (shouldn't happen in a 1:1 protocol) is dropped
+      try {
+        w.resolve(JSON.parse(line) as Record<string, unknown>);
+      } catch {
+        w.reject(new Error(`stream sidecar: non-JSON output: ${line}`));
+      }
+    }
+  });
+  p.on("error", (e) => failAll(e)); // e.g. python not on PATH
+  p.on("close", (code) => failAll(new Error(`stream sidecar exited (${code})`)));
+  return {
+    send: (request) =>
+      new Promise((resolve, reject) => {
+        waiters.push({ resolve, reject });
+        p.stdin.write(`${JSON.stringify(request)}\n`);
+      }),
+    close: () => {
+      try {
+        p.stdin.end();
+        p.kill();
+      } catch {
+        /* already gone */
+      }
+    },
+  };
+}
+
 /** Default argv: `python <bundled whisper_stt.py>`. Overridable via env for a different interpreter,
  * a moved sidecar, or (tests) a stub command. ponytail: path resolves relative to this file's source
  * tree — running from a compiled `dist/` needs `VISHU_VOICE_SIDECAR` set; named as the ceiling. */
@@ -55,6 +109,15 @@ function ttsArgv(env = process.env): string[] {
   if (env.VISHU_TTS_CMD) return JSON.parse(env.VISHU_TTS_CMD) as string[];
   const python = env.VISHU_VOICE_PYTHON ?? "python";
   const sidecar = env.VISHU_TTS_SIDECAR ?? fileURLToPath(new URL("../../sidecar/tts.py", import.meta.url));
+  return [python, sidecar];
+}
+
+/** Default argv for the long-lived streaming STT sidecar. Same override knobs as the one-shot STT,
+ * plus a dedicated `VISHU_STT_STREAM_CMD`/`VISHU_STT_STREAM_SIDECAR` (tests point this at a node stub). */
+function streamArgv(env = process.env): string[] {
+  if (env.VISHU_STT_STREAM_CMD) return JSON.parse(env.VISHU_STT_STREAM_CMD) as string[];
+  const python = env.VISHU_VOICE_PYTHON ?? "python";
+  const sidecar = env.VISHU_STT_STREAM_SIDECAR ?? fileURLToPath(new URL("../../sidecar/whisper_stream.py", import.meta.url));
   return [python, sidecar];
 }
 
@@ -159,6 +222,78 @@ export const voiceModule: VishuModule = {
       } catch (e) {
         return err("tts_failed", e instanceof Error ? e.message : String(e));
       }
+    });
+
+    // §12b full-duplex: streaming STT over a warm, long-lived sidecar. The browser opens a session, then
+    // pushes the growing mic WAV every ~1.5s and gets back a live partial transcript; end() returns the
+    // final. Keeping the model loaded across chunks (vs voice_transcribe's one-shot spawn) is the point.
+    interface SttSession {
+      stream: SidecarStream;
+      dir: string;
+      model?: string;
+      timer: ReturnType<typeof setTimeout>;
+    }
+    const STT = new Map<string, SttSession>();
+    const IDLE_MS = 120_000; // reap an abandoned session's warm child so a dropped client can't leak python
+
+    const endStt = (id: string): void => {
+      const s = STT.get(id);
+      if (!s) return;
+      clearTimeout(s.timer);
+      s.stream.close();
+      rmSync(s.dir, { recursive: true, force: true });
+      STT.delete(id);
+    };
+    const armIdle = (id: string): void => {
+      const s = STT.get(id);
+      if (!s) return;
+      clearTimeout(s.timer);
+      s.timer = setTimeout(() => endStt(id), IDLE_MS);
+      s.timer.unref?.(); // don't keep the process alive just for the reaper
+    };
+
+    rpc.register("vishu.voice_stt_start", async (params) => {
+      const p = (params ?? {}) as { model?: string };
+      const id = randomUUID();
+      const dir = mkdtempSync(join(tmpdir(), "vishu-stt-"));
+      const timer = setTimeout(() => endStt(id), IDLE_MS);
+      timer.unref?.();
+      STT.set(id, { stream: callSidecarStream(streamArgv()), dir, model: p.model, timer });
+      return ok({ sessionId: id });
+    });
+
+    rpc.register("vishu.voice_stt_chunk", async (params) => {
+      const p = (params ?? {}) as { sessionId?: string; audio_base64?: string; format?: string };
+      const s = p.sessionId ? STT.get(p.sessionId) : undefined;
+      if (!s) return err("invalid_params", "unknown or expired stt session");
+      if (!p.audio_base64) return err("invalid_params", "audio_base64 required");
+      armIdle(p.sessionId!);
+      // Overwrite the session's single wav with the growing audio-so-far; the sidecar re-transcribes it.
+      const path = join(s.dir, `in.${(p.format || "wav").replace(/[^a-z0-9]/gi, "")}`);
+      writeFileSync(path, Buffer.from(p.audio_base64, "base64"));
+      try {
+        const res = await s.stream.send({ audio_path: path, model: s.model });
+        if (res.error) return err("stt_failed", String(res.error));
+        return ok({ partial: String(res.partial ?? ""), engine: res.engine ? String(res.engine) : undefined });
+      } catch (e) {
+        endStt(p.sessionId!); // the sidecar died — tear the session down rather than wedge it
+        return err("stt_failed", e instanceof Error ? e.message : String(e));
+      }
+    });
+
+    rpc.register("vishu.voice_stt_end", async (params) => {
+      const p = (params ?? {}) as { sessionId?: string };
+      const s = p.sessionId ? STT.get(p.sessionId) : undefined;
+      if (!s) return ok({ final: "" }); // already reaped/ended — idempotent
+      let final = "";
+      try {
+        const res = await s.stream.send({ final: true });
+        final = String(res.final ?? res.partial ?? "");
+      } catch {
+        /* sidecar already gone — fall through to cleanup with whatever we have */
+      }
+      endStt(p.sessionId!);
+      return ok({ final });
     });
   },
 };
