@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { automationAddTrigger, automationList, automationSaveWorkflow, configSummary, type ConfigSummary, connectorsDaily, type DailyResult, dailyBriefing, evalRun, type EvalReport, type EvalTrend, memoryRecall, type Recalled, startTurn, type Trigger, type Workflow } from "./api.js";
+import { automationAddTrigger, automationList, automationSaveWorkflow, configSummary, type ConfigSummary, connectorsDaily, type DailyResult, dailyBriefing, evalRun, type EvalReport, type EvalTrend, memoryRecall, memoryTodoSet, type Recalled, startTurn, type Trigger, type Workflow } from "./api.js";
 
 const box: React.CSSProperties = { flex: 1, overflowY: "auto", padding: "var(--space-lg)", display: "flex", flexDirection: "column", gap: "var(--space-md)" };
 
@@ -181,14 +181,21 @@ export function Matters({ token }: { token: string }) {
 /** §11g Board: a read-only Kanban derived from recalled notes. Todo notes carry checklist lines —
  * "- [ ]" items land in To-do, "- [x]" in Done; matter notes form a Backlog column. Moving cards would
  * be memory writes, so this stays read-only (ponytail: read first). Reuses memory_recall_memories. */
+const colHead: React.CSSProperties = { color: "var(--accent)", fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, margin: "4px 0" };
+
+/** Kanban board over the memory vault. To-do/Done are live checkbox lines from todo notes; dragging a
+ * card between them flips its `- [ ]`/`- [x]` and persists via memory_todo_set (survives reload). Backlog
+ * (matters) is read-only — matters aren't checkbox items, so there's nothing to toggle. */
 export function Board({ token }: { token: string }) {
   const [notes, setNotes] = useState<Recalled[]>([]);
-  useEffect(() => {
+  const [over, setOver] = useState<string | null>(null);
+  const load = () => {
     if (!token) return;
     memoryRecall(token, "open matters todo tasks", 30)
       .then((r) => setNotes(r.notes.filter((n) => n.type === "todo" || n.type === "matter")))
       .catch((e) => alert(e instanceof Error ? e.message : String(e)));
-  }, [token]);
+  };
+  useEffect(load, [token]);
 
   const items = (checked: boolean) =>
     notes
@@ -200,29 +207,55 @@ export function Board({ token }: { token: string }) {
           .map((l) => ({ note: n.name, text: l.replace(/^-\s*\[[ xX]\]\s*/, "").trim() })),
       );
 
-  const columns = [
-    { title: "To-do", cards: items(false).map((it, i) => ({ key: `t${i}`, label: it.text, sub: it.note })) },
-    { title: "Done", cards: items(true).map((it, i) => ({ key: `d${i}`, label: it.text, sub: it.note })) },
-    { title: "Backlog", cards: notes.filter((n) => n.type === "matter").map((n) => ({ key: n.name, label: n.body.slice(0, 120), sub: n.name })) },
-  ];
+  const drop = (raw: string, done: boolean) => {
+    setOver(null);
+    try {
+      const { note, text } = JSON.parse(raw) as { note: string; text: string };
+      if (note && text) memoryTodoSet(token, note, text, done).then(load).catch((e) => alert(e instanceof Error ? e.message : String(e)));
+    } catch {
+      /* drop payload wasn't a draggable card — ignore */
+    }
+  };
 
+  const column = (title: string, done: boolean, cards: { note: string; text: string }[]) => (
+    <div
+      style={{ flex: 1, minWidth: 0, borderRadius: 6, outline: over === title ? "1px dashed var(--accent)" : "none", padding: 2 }}
+      onDragOver={(e) => { e.preventDefault(); setOver(title); }}
+      onDragLeave={() => setOver((o) => (o === title ? null : o))}
+      onDrop={(e) => { e.preventDefault(); drop(e.dataTransfer.getData("text/plain"), done); }}
+    >
+      <div style={colHead}>{title} ({cards.length})</div>
+      {cards.map((c) => (
+        <div
+          key={`${c.note}::${c.text}`}
+          className="card"
+          draggable
+          onDragStart={(e) => e.dataTransfer.setData("text/plain", JSON.stringify({ note: c.note, text: c.text }))}
+          style={{ marginBottom: 8, cursor: "grab" }}
+        >
+          <div style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{c.text}</div>
+          <div style={{ color: "var(--ink-muted)", fontSize: 11, marginTop: 4 }}>{c.note}</div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const backlog = notes.filter((n) => n.type === "matter");
   return (
     <div style={box}>
       {notes.length === 0 && <Empty>No tasks or matters yet — triage a message in Inbox to fill the board.</Empty>}
       <div style={{ display: "flex", gap: "var(--space-md)", alignItems: "flex-start" }}>
-        {columns.map((col) => (
-          <div key={col.title} style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ color: "var(--accent)", fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, margin: "4px 0" }}>
-              {col.title} ({col.cards.length})
+        {column("To-do", false, items(false))}
+        {column("Done", true, items(true))}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={colHead}>Backlog ({backlog.length})</div>
+          {backlog.map((n) => (
+            <div key={n.name} className="card" style={{ marginBottom: 8 }}>
+              <div style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{n.body.slice(0, 120)}</div>
+              <div style={{ color: "var(--ink-muted)", fontSize: 11, marginTop: 4 }}>{n.name}</div>
             </div>
-            {col.cards.map((c) => (
-              <div key={c.key} className="card" style={{ marginBottom: 8 }}>
-                <div style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{c.label}</div>
-                <div style={{ color: "var(--ink-muted)", fontSize: 11, marginTop: 4 }}>{c.sub}</div>
-              </div>
-            ))}
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );

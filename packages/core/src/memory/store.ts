@@ -239,6 +239,33 @@ export class MemoryStore {
     return moved;
   }
 
+  /** Board write-back: flip one "- [ ] text"/"- [x] text" line (matched by its text) in a todo note,
+   * in place so the note keeps its identity. Returns the updated note, or undefined if the note or the
+   * line is gone. ponytail: match by exact line text — the board already has it; no line-index bookkeeping. */
+  setTodo(name: string, text: string, done: boolean): Note | undefined {
+    const note = this.vault.read(name);
+    if (!note) return undefined;
+    const want = text.trim();
+    let hit = false;
+    const body = note.body
+      .split("\n")
+      .map((l) => {
+        const m = /^(\s*-\s*)\[[ xX]\](\s*)(.*)$/.exec(l);
+        if (m && m[3]!.trim() === want) {
+          hit = true;
+          return `${m[1]}[${done ? "x" : " "}]${m[2]}${m[3]}`;
+        }
+        return l;
+      })
+      .join("\n");
+    if (!hit) return undefined;
+    const updated: Note = { ...note, body, links: extractLinks(body), updated: new Date().toISOString() };
+    this.vault.write(updated);
+    this.guard(() => this.index.upsert(updated), undefined);
+    this.log.log("memory_todo_set", `${name}: ${done ? "done" : "todo"} ${want.slice(0, 40)}`);
+    return updated;
+  }
+
   /** §11f tiering sweep: expire ingest notes past ingestTtlDays (the raw firehose is transient), and
    * move working notes past archiveDays into the "cold" tier (kept on disk, marked by folder). Rebuilds
    * the index once if anything moved. Returns what expired vs archived. ponytail: age-based tiers; add

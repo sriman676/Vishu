@@ -32,6 +32,14 @@ export function registerMemory(registry: Registry, store: MemoryStore): void {
     return ok(selfHealMemory(store, { olderThanDays: p.olderThanDays, resolveConflicts: p.resolveConflicts }));
   });
 
+  // Board write-back: flip a single todo checkbox line (drag To-do↔Done) and persist it in place.
+  registry.register("vishu.memory_todo_set", (params) => {
+    const p = (params ?? {}) as { note?: string; text?: string; done?: boolean };
+    if (!p.note || !p.text) return err("invalid_params", "note and text are required");
+    const updated = store.setTodo(p.note, p.text, p.done ?? true);
+    return updated ? ok({ name: updated.name }) : err("not_found", "no matching todo line");
+  });
+
   // Run the background maintenance workers (janitor/distiller/curator) on demand; each is isolated so
   // one failure can't abort the batch. Returns per-worker one-line summaries.
   registry.register("vishu.workers_run", async () => ok(await runWorkers(memoryWorkers(store))));

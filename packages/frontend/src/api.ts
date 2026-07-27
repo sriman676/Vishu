@@ -47,6 +47,10 @@ export interface Recalled { name: string; type: string; body: string; score: num
 export const memoryRecall = (token: string, query: string, limit = 8) =>
   rpc<{ notes: Recalled[]; text: string }>(token, "vishu.memory_recall_memories", { query, limit });
 
+/** Board drag write-back: flip a todo checkbox line (To-do↔Done) and persist it. */
+export const memoryTodoSet = (token: string, note: string, text: string, done: boolean) =>
+  rpc<{ name: string }>(token, "vishu.memory_todo_set", { note, text, done });
+
 // §11a daily-driver: triage a pasted message → tier/summary + matched matters + extracted to-do + filed draft.
 export type Tier = "skip" | "info" | "urgent" | "needs_action";
 export interface DailyResult {
