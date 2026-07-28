@@ -145,6 +145,15 @@ export interface DashboardSnapshot {
 export const dashboardSnapshot = (token: string, limit = 40) =>
   rpc<DashboardSnapshot>(token, "vishu.dashboard_snapshot", { limit });
 
+// Cold-apply pipeline: resume page — assemble the resume + capture achievements (timestamped).
+export interface Achievement { text: string; at: string; tags: string[] }
+export const careerResume = (token: string, projectsJson?: string) =>
+  rpc<{ markdown: string }>(token, "vishu.career_resume", { projectsJson });
+export const careerAchievementAdd = (token: string, text: string) =>
+  rpc<Achievement>(token, "vishu.career_achievement_add", { text });
+export const careerAchievements = (token: string, tag?: string) =>
+  rpc<{ items: Achievement[] }>(token, "vishu.career_achievements", { tag });
+
 /** Subscribe to the core's SSE bus (tool:sync, notifications). Returns an unsubscribe. */
 export function subscribeEvents(token: string, onEvent: (e: unknown) => void): () => void {
   const es = new EventSource(`/events?token=${encodeURIComponent(token)}`);

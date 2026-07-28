@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { automationAddTrigger, automationList, automationSaveWorkflow, configSummary, type ConfigSummary, connectorsDaily, type DailyResult, dailyBriefing, evalRun, type EvalReport, type EvalTrend, memoryRecall, memoryTodoSet, type Recalled, startTurn, type Trigger, type Workflow } from "./api.js";
+import { automationAddTrigger, automationList, automationSaveWorkflow, careerAchievementAdd, careerAchievements, careerResume, type Achievement, configSummary, type ConfigSummary, connectorsDaily, type DailyResult, dailyBriefing, evalRun, type EvalReport, type EvalTrend, memoryRecall, memoryTodoSet, type Recalled, startTurn, type Trigger, type Workflow } from "./api.js";
 
 const box: React.CSSProperties = { flex: 1, overflowY: "auto", padding: "var(--space-lg)", display: "flex", flexDirection: "column", gap: "var(--space-md)" };
 
@@ -133,6 +133,58 @@ export function Memory({ token }: { token: string }) {
           <div style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{n.body}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Cold-apply pipeline: resume page — assemble the resume (profile + achievements + GitHub projects) and
+ * capture achievements (timestamped). Generation/scoring/outreach run through the agent chat; this page is
+ * the resume view + achievement capture. */
+export function Resume({ token }: { token: string }) {
+  const [markdown, setMarkdown] = useState("");
+  const [items, setItems] = useState<Achievement[]>([]);
+  const [text, setText] = useState("");
+  const load = async () => {
+    try {
+      const [r, a] = await Promise.all([careerResume(token), careerAchievements(token)]);
+      setMarkdown(r.markdown);
+      setItems(a.items);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const add = async () => {
+    if (!text.trim()) return;
+    try {
+      await careerAchievementAdd(token, text);
+      setText("");
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    }
+  };
+  useEffect(() => {
+    if (token) load();
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div style={box}>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input className="input" placeholder="add an achievement (use #tags to group)…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} />
+        <button className="btn" onClick={add}>Add</button>
+        <button className="btn" onClick={load}>Refresh</button>
+      </div>
+      {items.length === 0 && <Empty>Tell Vishu your achievements (chat or here) — they're timestamped and feed the resume.</Empty>}
+      {items.map((a) => (
+        <div key={`${a.at}-${a.text}`} style={{ color: "var(--ink-muted)", fontSize: 12 }}>
+          {a.at.slice(0, 10)} — {a.text}
+        </div>
+      ))}
+      {markdown && (
+        <div className="card">
+          <div style={{ color: "var(--ink-muted)", fontSize: 12, marginBottom: 4 }}>Assembled resume</div>
+          <div style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{markdown}</div>
+        </div>
+      )}
     </div>
   );
 }

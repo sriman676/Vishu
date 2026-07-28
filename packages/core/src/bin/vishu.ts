@@ -46,6 +46,7 @@ import { contactSource, guessEmails, parseContacts } from "../career/osint.js";
 import { scoreResume } from "../career/score.js";
 import { parseJobPosting, generateCoverLetter, type JobPosting } from "../career/generate.js";
 import { buildColdMail, renderDraft } from "../career/draft.js";
+import { registerCareer } from "../career/rpc.js";
 import { IdentityProfile } from "../personalization/profile.js";
 import { critiquePrompts } from "../personalization/critique.js";
 import { registerEvolve, registerProfile, registerTwin } from "../personalization/rpc.js";
@@ -498,6 +499,16 @@ async function serve(): Promise<number> {
       writeFileSync(out, renderDraft(mail));
       return `draft saved (review before sending): ${out}\n\n${renderDraft(mail)}`;
     },
+  });
+  // S6: resume page RPC surface — assemble the resume + add/list achievements from the UI.
+  registerCareer(registry, {
+    achievements,
+    buildResume: (projectsJson) =>
+      assembleResumeMarkdown({
+        profile: profile.render(),
+        achievements: achievements.list(),
+        projects: projectsJson ? parseGithubProjects(projectsJson) : [],
+      }),
   });
   // F0 approval channel: one terminal y/N prompt per gated action, shared across every turn so prompts
   // serialize on one stdin. No TTY (detached) → denies, keeping the fail-closed guarantee for send/spend/delete.
