@@ -50,6 +50,9 @@ export interface AgentDeps {
   suggest?: (actionClass: ActionClass, signature: string) => void;
   /** Span tracer (PAUL): times router + tool-loop spans into the ledger's latency section. */
   tracer?: Tracer;
+  /** Automatic memory: post-turn, extract any durable user fact and file it. Fire-and-forget — never
+   * blocks or breaks a turn. Absent → no auto-learning (wired at the composition root). */
+  learn?: (message: string) => void | Promise<unknown>;
 }
 
 export interface TurnResult {
@@ -114,6 +117,9 @@ export class AgentService {
       },
       session.messages,
     );
+    // Automatic memory: pull any durable user fact out of the turn, unattended. Fire-and-forget so a
+    // slow/failing extraction never delays or breaks the reply.
+    void Promise.resolve(this.deps.learn?.(message)).catch(() => {});
     return { sessionId: session.id, final: result.final, iterations: result.iterations, turns: session.messages.length };
   }
 

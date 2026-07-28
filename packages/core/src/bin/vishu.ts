@@ -36,6 +36,7 @@ import { registerMemory } from "../memory/rpc.js";
 import { MODULES } from "../modules/all.js";
 import { loadModules } from "../modules/registry.js";
 import { MemoryStore } from "../memory/store.js";
+import { learnFromTurn } from "../memory/autolearn.js";
 import { registerMemoryTools } from "../memory/tools.js";
 import { ProjectEvolver, runEvolutionPass } from "../personalization/evolve.js";
 import { DigitalTwin } from "../personalization/twin.js";
@@ -409,6 +410,26 @@ async function serve(): Promise<number> {
     sendCap,
     decisions,
     suggest,
+    // Automatic memory: extract a durable user fact post-turn on the cheap classifier lane, file it
+    // under "core". Fire-and-forget in the service, so latency/faults never touch the reply.
+    learn: (message) =>
+      learnFromTurn(
+        memory,
+        async (system, user) => {
+          const res = await roles.for("classifier").chat({
+            model: roles.modelFor("classifier") ?? config.provider.model,
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user },
+            ],
+            temperature: 0,
+            maxTokens: 120,
+            category: "memory",
+          });
+          return res.content;
+        },
+        message,
+      ),
   }, sessions);
   registerAgent(registry, agentService);
   registerDecisions(registry, decisions); // vishu.decisions_list / autonomy_grant / autonomy_revoke
