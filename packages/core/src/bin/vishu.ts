@@ -41,6 +41,8 @@ import { registerMemoryTools } from "../memory/tools.js";
 import { ProjectEvolver, runEvolutionPass } from "../personalization/evolve.js";
 import { DigitalTwin } from "../personalization/twin.js";
 import { AchievementStore } from "../career/achievements.js";
+import { parseGithubProjects, assembleResumeMarkdown } from "../career/resume.js";
+import { contactSource, guessEmails, parseContacts } from "../career/osint.js";
 import { IdentityProfile } from "../personalization/profile.js";
 import { critiquePrompts } from "../personalization/critique.js";
 import { registerEvolve, registerProfile, registerTwin } from "../personalization/rpc.js";
@@ -373,6 +375,38 @@ async function serve(): Promise<number> {
     run: async (a) => {
       const items = achievements.list(a.tag ? String(a.tag) : undefined);
       return items.length ? items.map((x) => `- ${x.at.slice(0, 10)} — ${x.text}`).join("\n") : "no achievements recorded yet";
+    },
+  });
+  // S1 resume assembler: profile + achievements + GitHub projects → resume markdown. The agent fetches
+  // repos via a mounted GitHub MCP and passes the raw JSON as `projectsJson`; this parses + assembles.
+  tools.register({
+    name: "resume_build",
+    meta: { action: "read" },
+    description: "Assemble a resume (markdown) from the identity profile + recorded achievements + GitHub projects. Pass the raw GitHub repos JSON (from a GitHub MCP) as `projectsJson` to include projects.",
+    parameters: { type: "object", properties: { projectsJson: { type: "string" } } },
+    run: async (a) =>
+      assembleResumeMarkdown({
+        profile: profile.render(),
+        achievements: achievements.list(),
+        projects: a.projectsJson ? parseGithubProjects(String(a.projectsJson)) : [],
+      }),
+  });
+  // S4 OSINT contact seam: parse a contact-lookup response (Apollo/Hunter/web JSON via `lookupJson`) and
+  // seed likely HR emails from names + `domain`. Pluggable source; free web lane by default (no key needed).
+  tools.register({
+    name: "osint_contacts",
+    meta: { action: "read" },
+    description: "Find company/HR contacts for outreach. Pass a contact-lookup response as `lookupJson` (from an Apollo/Hunter/web MCP) and/or a company `domain` to guess likely emails. Returns contacts + the active source.",
+    parameters: { type: "object", properties: { company: { type: "string" }, domain: { type: "string" }, lookupJson: { type: "string" } }, required: ["company"] },
+    run: async (a) => {
+      const source = contactSource();
+      const contacts = a.lookupJson ? parseContacts(String(a.lookupJson), source) : [];
+      const domain = a.domain ? String(a.domain) : undefined;
+      const lines = contacts.map((c) => {
+        const guesses = !c.email && c.name && domain ? ` — guesses: ${guessEmails(c.name, domain).slice(0, 3).join(", ")}` : "";
+        return `- ${[c.name, c.role, c.email].filter(Boolean).join(" · ") || "(unnamed)"}${guesses}`;
+      });
+      return `source: ${source}\n${lines.length ? lines.join("\n") : `no contacts parsed for ${String(a.company)}${domain ? ` — try email patterns at ${domain}` : ""}`}`;
     },
   });
   // F0 approval channel: one terminal y/N prompt per gated action, shared across every turn so prompts
