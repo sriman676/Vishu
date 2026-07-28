@@ -40,6 +40,7 @@ import { learnFromTurn } from "../memory/autolearn.js";
 import { registerMemoryTools } from "../memory/tools.js";
 import { ProjectEvolver, runEvolutionPass } from "../personalization/evolve.js";
 import { DigitalTwin } from "../personalization/twin.js";
+import { AchievementStore } from "../career/achievements.js";
 import { IdentityProfile } from "../personalization/profile.js";
 import { critiquePrompts } from "../personalization/critique.js";
 import { registerEvolve, registerProfile, registerTwin } from "../personalization/rpc.js";
@@ -351,6 +352,29 @@ async function serve(): Promise<number> {
   const sessions = new SessionStore();
   const twin = new DigitalTwin(join(config.paths.workspaceDir, "twin.json"));
   const profile = new IdentityProfile(join(config.paths.workspaceDir, "profile.json"));
+  // Cold-apply pipeline S0: timestamped achievements the user adds by conversation/typing; resume-gen
+  // reads them later. Zero external dep — the one pipeline brick that works before any MCP is connected.
+  const achievements = new AchievementStore(join(config.paths.workspaceDir, "achievements.json"));
+  tools.register({
+    name: "career_achievement_add",
+    meta: { action: "write" },
+    description: "Record a career achievement (timestamped now). Use #tags to group it (e.g. #backend). Feeds resume/cover-letter generation.",
+    parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+    run: async (a) => {
+      const saved = achievements.add(String(a.text ?? ""));
+      return saved ? `recorded (${saved.at.slice(0, 10)})${saved.tags.length ? ` [${saved.tags.join(", ")}]` : ""}` : "skipped (blank or duplicate)";
+    },
+  });
+  tools.register({
+    name: "career_achievements",
+    meta: { action: "read" },
+    description: "List recorded achievements, newest first. Optional `tag` filter.",
+    parameters: { type: "object", properties: { tag: { type: "string" } } },
+    run: async (a) => {
+      const items = achievements.list(a.tag ? String(a.tag) : undefined);
+      return items.length ? items.map((x) => `- ${x.at.slice(0, 10)} — ${x.text}`).join("\n") : "no achievements recorded yet";
+    },
+  });
   // F0 approval channel: one terminal y/N prompt per gated action, shared across every turn so prompts
   // serialize on one stdin. No TTY (detached) → denies, keeping the fail-closed guarantee for send/spend/delete.
   const ask = makeAsk(terminalPrompt);
