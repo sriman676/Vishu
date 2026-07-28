@@ -53,6 +53,11 @@ export interface AgentDeps {
   /** Automatic memory: post-turn, extract any durable user fact and file it. Fire-and-forget — never
    * blocks or breaks a turn. Absent → no auto-learning (wired at the composition root). */
   learn?: (message: string) => void | Promise<unknown>;
+  /** Learned proactivity: called the turn a repeated task first crosses the recurrence threshold, to
+   * SUGGEST scheduling it (suggest-only, via the bus). Absent → no proactive nudges. */
+  suggestTask?: (task: string) => void;
+  /** Recurrence count at which suggestTask fires (default 3 — matches twin.suggestions). */
+  recurringThreshold?: number;
 }
 
 export interface TurnResult {
@@ -98,7 +103,11 @@ export class AgentService {
     this.deps.mode?.route?.(message); // brain⇄builder: auto-switch lane before the prompt/tools are built
     this.deps.mode?.noticeTurn?.(message); // §8: suggest proposing a mode if the turn needs an uncovered persona
     const session = sessionId ? this.store.get(sessionId) : this.store.create(this.systemPrompt());
-    this.deps.twin?.record(message); // auto-record: repeated prompts become suggestions, unattended
+    const recurrence = this.deps.twin?.record(message); // auto-record: repeated prompts become suggestions
+    // Learned proactivity: the turn a task first hits the threshold, nudge to schedule it. Firing on the
+    // exact count self-dedupes — it never re-fires, and an already-accepted task (count already past the
+    // threshold) is never nudged again.
+    if (recurrence === (this.deps.recurringThreshold ?? 3)) this.deps.suggestTask?.(message);
     session.messages.push({ role: "user", content: message });
     // §8: narrow the tool surface to the active mode's subset (teacher/interviewer can't write or shell);
     // mode-control tools always survive so a restrictive mode can't trap the agent. Absent → full registry.

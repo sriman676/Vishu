@@ -430,6 +430,9 @@ async function serve(): Promise<number> {
         },
         message,
       ),
+    // Learned proactivity: when a task recurs enough, surface a suggest-only nudge to schedule it. The
+    // user/UI accepts via the existing twin.accept + trigger path — this only surfaces the suggestion.
+    suggestTask: (task) => bus.publish({ domain: "proactivity", type: "suggest_schedule", payload: { task } }),
   }, sessions);
   registerAgent(registry, agentService);
   registerDecisions(registry, decisions); // vishu.decisions_list / autonomy_grant / autonomy_revoke
