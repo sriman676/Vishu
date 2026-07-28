@@ -43,6 +43,7 @@ import { DigitalTwin } from "../personalization/twin.js";
 import { AchievementStore } from "../career/achievements.js";
 import { parseGithubProjects, assembleResumeMarkdown } from "../career/resume.js";
 import { contactSource, guessEmails, parseContacts } from "../career/osint.js";
+import { scoreResume } from "../career/score.js";
 import { IdentityProfile } from "../personalization/profile.js";
 import { critiquePrompts } from "../personalization/critique.js";
 import { registerEvolve, registerProfile, registerTwin } from "../personalization/rpc.js";
@@ -408,6 +409,22 @@ async function serve(): Promise<number> {
       });
       return `source: ${source}\n${lines.length ? lines.join("\n") : `no contacts parsed for ${String(a.company)}${domain ? ` — try email patterns at ${domain}` : ""}`}`;
     },
+  });
+  // S2 scoring loop: score a resume with the local hiring-agent evaluator (scorer, not generator) and
+  // return category scores + areas to improve. Passthrough to resume_audit_cli.py; degrades gracefully.
+  tools.register({
+    name: "resume_score",
+    meta: { action: "read" },
+    description: "Score a resume with the local hiring-agent evaluator (category scores + areas to improve). Pass `resumeMarkdown` (e.g. from resume_build) or a `resumePath`. Needs VISHU_HIRING_AGENT_DIR + hiring-agent's own LLM env.",
+    parameters: { type: "object", properties: { resumeMarkdown: { type: "string" }, resumePath: { type: "string" }, model: { type: "string" } } },
+    run: async (a) =>
+      scoreResume({
+        hiringDir: process.env.VISHU_HIRING_AGENT_DIR,
+        python: process.env.VISHU_PYTHON,
+        resumeMarkdown: a.resumeMarkdown ? String(a.resumeMarkdown) : undefined,
+        resumePath: a.resumePath ? String(a.resumePath) : undefined,
+        model: a.model ? String(a.model) : undefined,
+      }),
   });
   // F0 approval channel: one terminal y/N prompt per gated action, shared across every turn so prompts
   // serialize on one stdin. No TTY (detached) → denies, keeping the fail-closed guarantee for send/spend/delete.
