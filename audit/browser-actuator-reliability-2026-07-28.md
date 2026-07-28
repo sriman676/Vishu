@@ -1,5 +1,10 @@
 # Browser actuator reliability audit — 2026-07-28
 
+> STATUS 2026-07-28: **C1 + C2 shipped** — S1 fail-closed click, R3 error taxonomy, R4 type-by-label,
+> R1 fill read-back + click nav-signal, R2 bounded retry, R8 post-commit capture. C3 (R5 settle / R6
+> iframes / R7 tabs) remains, gated on a concrete target flow.
+
+
 Scope: `packages/core/src/modules/browser.ts` (the real-Chrome universal actuator) + its test file.
 Goal: what stops it booking/filling/confirming an end-to-end task *reliably*. Report only — no code
 changed. Ranked by severity; each gap cites evidence and the minimal fix.

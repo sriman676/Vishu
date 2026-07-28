@@ -26,8 +26,28 @@ export function isConsequential(label: string): boolean {
   return CONSEQUENTIAL.test(label);
 }
 
+/** Fail-closed click gate (S1): refuse a consequential label AND an unreadable/empty one. An unlabeled or
+ * late-rendering control is treated as consequential and routed to browser_commit — never auto-clicked.
+ * ponytail: this makes icon-only benign buttons need confirmation too; that's the safe direction, and
+ * matches the "ambiguous = consequential" rule the intent split already rides on. */
+export function shouldRefuseClick(label: string): boolean {
+  return !label.trim() || isConsequential(label);
+}
+
+/** Classify a Playwright/actuator error into a small enum tag so the agent (and future retry logic) can
+ * branch: retry a `timeout`/`blocked`/`detached`, re-target a `no_target`, abort a `not_installed`. */
+export function classifyBrowserError(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes("playwright not installed") || m.includes("vishu_chrome_profile")) return "not_installed";
+  if (m.includes("timeout") || m.includes("timed out")) return "timeout";
+  if (m.includes("detached") || m.includes("not attached")) return "detached";
+  if (m.includes("intercepts pointer") || m.includes("not visible") || m.includes("outside of the viewport") || m.includes("not stable")) return "blocked";
+  if (m.includes("no node found") || m.includes("resolved to 0") || m.includes("selector` or") || m.includes("required")) return "no_target";
+  return "unknown";
+}
+
 /** Minimal Playwright surface we use — declared locally so the core compiles without the optional dep. */
-interface Page {
+export interface Page {
   goto(url: string): Promise<unknown>;
   title(): Promise<string>;
   url(): string;
@@ -37,11 +57,40 @@ interface Page {
   mouse: { wheel(dx: number, dy: number): Promise<unknown> };
   locator(sel: string): Locator;
   getByText(text: string): Locator;
+  getByLabel(text: string): Locator;
 }
-interface Locator {
+export interface Locator {
   first(): Locator;
   innerText(opts?: { timeout?: number }): Promise<string>;
   click(opts?: { timeout?: number }): Promise<unknown>;
+  fill(value: string, opts?: { timeout?: number }): Promise<unknown>;
+  inputValue(opts?: { timeout?: number }): Promise<string>;
+}
+
+/** Error tags worth retrying — a transient not-yet-actionable state (mid-animation, covered, detached,
+ * slow). `no_target` / `not_installed` are not retried (a better selector or a fix is needed, not a wait). */
+const RETRYABLE = new Set(["timeout", "blocked", "detached"]);
+
+/** R2: bounded retry with linear backoff on retryable error classes only. `sleep` is injectable so tests
+ * run instantly. Rethrows the last error when attempts are exhausted or the error isn't retryable. */
+export async function withRetry<T>(
+  action: () => Promise<T>,
+  attempts = 3,
+  backoffMs = 250,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await action();
+    } catch (e) {
+      last = e;
+      const tag = classifyBrowserError(e instanceof Error ? e.message : String(e));
+      if (!RETRYABLE.has(tag) || i === attempts - 1) throw e;
+      await sleep(backoffMs * (i + 1));
+    }
+  }
+  throw last;
 }
 
 /** Lazy singleton: launch (once) a persistent Chrome using the user's real profile so existing logins
@@ -78,13 +127,22 @@ function locate(page: Page, target: { selector?: string; text?: string }): Locat
   throw new Error("a `selector` or `text` target is required");
 }
 
+/** Locate an input field by CSS `selector` or, for a text label, by its accessible label (getByText finds
+ * text nodes, not inputs — getByLabel is the right aim for a form field). R4: browser_type honours both. */
+export function locateField(page: Page, target: { selector?: string; text?: string }): Locator {
+  if (target.selector) return page.locator(target.selector).first();
+  if (target.text) return page.getByLabel(target.text).first();
+  throw new Error("browser_type needs a `selector` or a `text` label for the input field");
+}
+
 async function guarded<T>(fn: () => Promise<T>): Promise<string> {
   try {
     // §4b: browser actions (persistent Chrome) count against the heavy-subsystem cap so they don't
     // thrash alongside the voice sidecars or local LLM.
     return String(await withHeavy(fn));
   } catch (e) {
-    return `error: ${e instanceof Error ? e.message : String(e)}`;
+    const msg = e instanceof Error ? e.message : String(e);
+    return `error(${classifyBrowserError(msg)}): ${msg}`;
   }
 }
 
@@ -146,15 +204,19 @@ export function registerBrowserTools(tools: ToolRegistry, workspaceDir: string):
   tools.register({
     name: "browser_type",
     meta: { action: "write" },
-    description: "Type text into a field (by `selector` or visible `text` label). Drafting only — reversible.",
+    description: "Type text into a field (by CSS `selector` or its visible `text` label). Drafting only — reversible.",
     parameters: { type: "object", properties: { selector: { type: "string" }, text: { type: "string" }, value: { type: "string" } }, required: ["value"] },
     run: (a) =>
       guarded(async () => {
         const page = await getPage();
-        const sel = a.selector ? String(a.selector) : undefined;
-        if (!sel) throw new Error("browser_type needs a `selector` for the input field");
-        await page.fill(sel, String(a.value));
-        return "typed";
+        const value = String(a.value);
+        // R4: honour both targeting modes the description advertises — selector, or label via getByLabel.
+        const field = locateField(page, { selector: a.selector ? String(a.selector) : undefined, text: a.text ? String(a.text) : undefined });
+        await withRetry(() => field.fill(value, { timeout: 5000 }));
+        // R1: read the value back so a silently-dropped fill no longer looks like success.
+        const got = await field.inputValue({ timeout: 2000 }).catch(() => undefined);
+        if (got !== undefined && got !== value) return `typed, but verification mismatch — expected "${value}", field holds "${got}"`;
+        return got === undefined ? "typed (unverified — could not read field back)" : "typed (verified)";
       }),
   });
 
@@ -171,11 +233,16 @@ export function registerBrowserTools(tools: ToolRegistry, workspaceDir: string):
         const loc = locate(page, a);
         // Intent gate: read the target's label; a consequential control must go through browser_commit.
         const label = (a.text ? String(a.text) : await loc.innerText({ timeout: 3000 }).catch(() => "")).trim();
-        if (isConsequential(label)) {
-          return `refused: "${label}" looks consequential (send/buy/delete/submit). Use browser_commit to click it — it will ask for your confirmation.`;
+        // S1: refuse consequential OR unreadable labels — fail toward the gate, never auto-click a control
+        // whose intent we can't confirm.
+        if (shouldRefuseClick(label)) {
+          return `refused: "${label || "(unreadable label)"}" is consequential or unreadable. Use browser_commit to click it — it will ask for your confirmation.`;
         }
-        await loc.click({ timeout: 5000 });
-        return `clicked "${label || a.selector}"`;
+        const before = page.url();
+        await withRetry(() => loc.click({ timeout: 5000 }));
+        // R1: report a navigation signal so the agent can tell a real click from a silent no-op.
+        const after = page.url();
+        return `clicked "${label || a.selector}"${after !== before ? ` — navigated to ${after}` : ""}`;
       }),
   });
 
@@ -192,10 +259,13 @@ export function registerBrowserTools(tools: ToolRegistry, workspaceDir: string):
         const page = await getPage();
         const { mkdirSync } = await import("node:fs");
         mkdirSync(shotDir, { recursive: true });
-        const shot = join(shotDir, `commit-${Date.now()}.png`);
-        await page.screenshot({ path: shot }); // record the pre-action state (approval already granted by the gate)
-        await locate(page, a).click({ timeout: 5000 });
-        return `committed "${a.text ?? a.selector}" (screenshot: ${shot})`;
+        const before = join(shotDir, `commit-before-${Date.now()}.png`);
+        await page.screenshot({ path: before }); // record the pre-action state (approval already granted by the gate)
+        await withRetry(() => locate(page, a).click({ timeout: 5000 }));
+        // R8: capture the post-action state too, so "did it actually go through?" is answerable.
+        const after = join(shotDir, `commit-after-${Date.now()}.png`);
+        await page.screenshot({ path: after });
+        return `committed "${a.text ?? a.selector}" (before: ${before}, after: ${after})`;
       }),
   });
 }
