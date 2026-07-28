@@ -44,6 +44,8 @@ import { AchievementStore } from "../career/achievements.js";
 import { parseGithubProjects, assembleResumeMarkdown } from "../career/resume.js";
 import { contactSource, guessEmails, parseContacts } from "../career/osint.js";
 import { scoreResume } from "../career/score.js";
+import { parseJobPosting, generateCoverLetter, type JobPosting } from "../career/generate.js";
+import { buildColdMail, renderDraft } from "../career/draft.js";
 import { IdentityProfile } from "../personalization/profile.js";
 import { critiquePrompts } from "../personalization/critique.js";
 import { registerEvolve, registerProfile, registerTwin } from "../personalization/rpc.js";
@@ -425,6 +427,77 @@ async function serve(): Promise<number> {
         resumePath: a.resumePath ? String(a.resumePath) : undefined,
         model: a.model ? String(a.model) : undefined,
       }),
+  });
+  // Career LLM lane: one small completion helper for the generation steps (job parse, cover letter).
+  const careerLLM = (temperature: number, maxTokens: number) => async (system: string, user: string) => {
+    const res = await router.chat({
+      model: config.provider.model,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      temperature,
+      maxTokens,
+      category: "career",
+    });
+    return res.content;
+  };
+  // S3 (manual intake): structure a pasted job posting into {title, company, domain, description}.
+  tools.register({
+    name: "job_parse",
+    meta: { action: "read" },
+    description: "Structure a pasted job posting (raw text or fetched page) into JSON {title, company, domain, description}. Feeds cover_letter_generate + osint_contacts.",
+    parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+    run: async (a) => {
+      const job = await parseJobPosting(careerLLM(0, 700), String(a.text ?? ""));
+      return job ? JSON.stringify(job) : "could not parse a job posting from that text";
+    },
+  });
+  // S2 (generation): draft a tailored cover letter from the resume + parsed job (+ optional contact name).
+  tools.register({
+    name: "cover_letter_generate",
+    meta: { action: "read" },
+    description: "Draft a tailored cover letter. Pass `resumeMarkdown` (from resume_build) and `jobJson` (from job_parse); optional `contactName`.",
+    parameters: { type: "object", properties: { resumeMarkdown: { type: "string" }, jobJson: { type: "string" }, contactName: { type: "string" } }, required: ["resumeMarkdown", "jobJson"] },
+    run: async (a) => {
+      let job: JobPosting;
+      try {
+        job = JSON.parse(String(a.jobJson)) as JobPosting;
+      } catch {
+        return "jobJson is not valid JSON — pass the output of job_parse";
+      }
+      return generateCoverLetter(careerLLM(0.4, 900), {
+        resumeMarkdown: String(a.resumeMarkdown ?? ""),
+        job,
+        contactName: a.contactName ? String(a.contactName) : undefined,
+      });
+    },
+  });
+  // S5 (draft only): assemble a cold-outreach email into the workspace outbox for review. NEVER sends —
+  // sending stays the existing send-class GmailConnector path, explicitly approved by the user.
+  tools.register({
+    name: "coldmail_draft",
+    meta: { action: "write" },
+    description: "Assemble a cold-outreach email (cover letter + job + contact) and save it to the outbox for review. Draft only — does NOT send.",
+    parameters: {
+      type: "object",
+      properties: { coverLetter: { type: "string" }, jobTitle: { type: "string" }, company: { type: "string" }, contactName: { type: "string" }, contactEmail: { type: "string" }, fromName: { type: "string" }, resumePath: { type: "string" } },
+      required: ["coverLetter", "jobTitle", "company"],
+    },
+    run: async (a) => {
+      const mail = buildColdMail({
+        job: { title: String(a.jobTitle), company: String(a.company) },
+        contact: { name: a.contactName ? String(a.contactName) : undefined, email: a.contactEmail ? String(a.contactEmail) : undefined },
+        coverLetter: String(a.coverLetter ?? ""),
+        fromName: a.fromName ? String(a.fromName) : undefined,
+        resumePath: a.resumePath ? String(a.resumePath) : undefined,
+      });
+      const dir = join(config.paths.workspaceDir, "outbox");
+      mkdirSync(dir, { recursive: true });
+      const out = join(dir, `draft-${Date.now()}.txt`);
+      writeFileSync(out, renderDraft(mail));
+      return `draft saved (review before sending): ${out}\n\n${renderDraft(mail)}`;
+    },
   });
   // F0 approval channel: one terminal y/N prompt per gated action, shared across every turn so prompts
   // serialize on one stdin. No TTY (detached) → denies, keeping the fail-closed guarantee for send/spend/delete.
