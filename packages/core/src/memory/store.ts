@@ -326,6 +326,41 @@ export class MemoryStore {
     return out;
   }
 
+  /** Repair dangling wikilinks: for each live note, any `[[target]]` whose slug resolves to no live
+   * note (by name or subject slug) is unlinked in place — the brackets are stripped but the text is
+   * kept, so the dead graph edge is removed without losing prose. Opt-in (rewriting note bodies is a
+   * trust boundary), mirroring resolveConflicts. Returns the severed link slugs per note.
+   * ponytail: unlink (keep the words), don't guess a rename target — re-pointing needs a rename map
+   * we don't have; add fuzzy re-point only if dangling links routinely mean a knowable target. */
+  repairBrokenLinks(): { note: string; unlinked: string[] }[] {
+    const live = this.notes();
+    const targets = new Set<string>();
+    for (const n of live) {
+      targets.add(n.name);
+      if (n.subject) targets.add(slugify(n.subject));
+    }
+    const out: { note: string; unlinked: string[] }[] = [];
+    for (const n of live) {
+      const unlinked: string[] = [];
+      const body = n.body.replace(/\[\[([^\]]+)\]\]/g, (m: string, inner: string) => {
+        const slug = slugify(inner);
+        if (targets.has(slug)) return m; // live edge — keep it
+        unlinked.push(slug);
+        return inner; // dangling — strip the brackets, keep the text
+      });
+      if (!unlinked.length) continue;
+      const updated: Note = { ...n, body, links: extractLinks(body), updated: new Date().toISOString() };
+      this.vault.write(updated);
+      this.guard(() => this.index.upsert(updated), undefined);
+      out.push({ note: n.name, unlinked });
+    }
+    if (out.length) {
+      this.reindex();
+      this.log.log("memory_repair_links", `${out.length} notes, ${out.reduce((a, b) => a + b.unlinked.length, 0)} links severed`);
+    }
+    return out;
+  }
+
   /** Live notes with no outbound and no inbound links — isolated in the graph, easy to lose. */
   orphans(): string[] {
     const live = this.notes();

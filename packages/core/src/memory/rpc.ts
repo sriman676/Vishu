@@ -26,10 +26,11 @@ export function registerMemory(registry: Registry, store: MemoryStore): void {
   });
 
   // Self-healing: evict stale superseded notes (bound growth), report conflicts/broken-links/orphans, and
-  // (opt-in) auto-repair same-subject contradictions by keeping the newest and removing stale duplicates.
+  // (opt-in) auto-repair same-subject contradictions (resolveConflicts: keep newest, drop stale) and
+  // dangling wikilinks (repairLinks: unlink dead [[targets]] in place, keeping the text).
   registry.register("vishu.memory_selfheal", (params) => {
-    const p = (params ?? {}) as { olderThanDays?: number; resolveConflicts?: boolean };
-    return ok(selfHealMemory(store, { olderThanDays: p.olderThanDays, resolveConflicts: p.resolveConflicts }));
+    const p = (params ?? {}) as { olderThanDays?: number; resolveConflicts?: boolean; repairLinks?: boolean };
+    return ok(selfHealMemory(store, { olderThanDays: p.olderThanDays, resolveConflicts: p.resolveConflicts, repairLinks: p.repairLinks }));
   });
 
   // Board write-back: flip a single todo checkbox line (drag To-do↔Done) and persist it in place.

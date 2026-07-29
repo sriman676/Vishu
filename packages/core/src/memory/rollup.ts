@@ -34,6 +34,8 @@ export interface SelfHealResult {
   pruned: string[];
   /** Contradictions auto-repaired (newest kept, stale duplicates removed) when resolveConflicts was set. */
   resolved: { subject: string; kept: string; removed: string[] }[];
+  /** Dangling wikilinks severed (unlinked in place, text kept) when repairLinks was set. */
+  repairedLinks: { note: string; unlinked: string[] }[];
   /** Subjects that still have more than one live note (recency-weighted recall handles ranking). */
   conflicts: { subject: string; notes: string[] }[];
   /** Notes with [[links]] pointing at a target that no live note satisfies (dangling references). */
@@ -45,14 +47,19 @@ export interface SelfHealResult {
 /** Self-healing memory (Set C #7): consolidate by evicting stale superseded notes (bounds unbounded
  * growth) and report unresolved same-subject contradictions. Recall already applies recency/decay
  * weighting; this is the periodic maintenance + conflict-surfacing pass. Extends the rollup. */
-export function selfHealMemory(store: MemoryStore, opts: { olderThanDays?: number; resolveConflicts?: boolean } = {}): SelfHealResult {
+export function selfHealMemory(
+  store: MemoryStore,
+  opts: { olderThanDays?: number; resolveConflicts?: boolean; repairLinks?: boolean } = {},
+): SelfHealResult {
   const pruned = store.pruneSuperseded(opts.olderThanDays);
   const resolved = opts.resolveConflicts ? store.resolveConflicts() : [];
+  const repairedLinks = opts.repairLinks ? store.repairBrokenLinks() : [];
   return {
     pruned,
     resolved,
+    repairedLinks,
     conflicts: store.conflicts(), // re-read after any resolution so the report reflects what remains
-    brokenLinks: store.brokenLinks(),
+    brokenLinks: store.brokenLinks(), // re-read after repair so the report reflects what dangling links remain
     orphans: store.orphans(),
   };
 }

@@ -127,6 +127,25 @@ test("self-heal: resolveConflicts keeps the newest same-subject note and removes
   store.close();
 });
 
+test("self-heal: repairLinks severs a dangling wikilink in place, keeps the text, and leaves live links intact", async () => {
+  const { vault, db } = paths();
+  const store = new MemoryStore(vault, db);
+  await store.put({ content: "Jane Doe is the tech lead.", subject: "jane-doe", type: "person" });
+  // One live link ([[Jane Doe]]) and one dangling ([[Nonexistent Thing]]) in the same note.
+  await store.put({ content: "Lead is [[Jane Doe]]; also see [[Nonexistent Thing]].", subject: "project-apollo", type: "project" });
+
+  const healed = selfHealMemory(store, { repairLinks: true });
+  assert.deepEqual(healed.repairedLinks, [{ note: "project-apollo", unlinked: ["nonexistent-thing"] }]);
+  assert.deepEqual(healed.brokenLinks, [], "no dangling links remain after repair");
+
+  const repaired = store.notes().find((n) => n.name === "project-apollo")!;
+  assert.match(repaired.body, /\[\[Jane Doe\]\]/, "the live link is preserved");
+  assert.doesNotMatch(repaired.body, /\[\[Nonexistent Thing\]\]/, "the dead link's brackets are stripped");
+  assert.match(repaired.body, /see Nonexistent Thing/, "the dead link's text is kept as prose");
+  assert.deepEqual(repaired.links, ["jane-doe"], "only the live edge remains in the link graph");
+  store.close();
+});
+
 test("self-heal: reports broken links and orphans; a well-linked note is neither", async () => {
   const { vault, db } = paths();
   const store = new MemoryStore(vault, db);
