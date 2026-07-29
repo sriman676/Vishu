@@ -18,9 +18,10 @@ export interface DecisionEntry {
  *  - an auto-approve grant list the ApprovalGate consults BEFORE asking.
  *
  * Fail-closed on every axis:
- *  - grants can NEVER cover send/spend/delete/change_setting — those stay always-ask (hard floor);
+ *  - grants AND learned tiers can NEVER cover send/spend/delete/change_setting — always-ask (hard floor);
  *  - a grant only exists once the human issues one (vishu.autonomy_grant); the gate NEVER self-grants;
- *  - after N clean approvals of a reversible signature the gate merely SUGGESTS a grant on the bus.
+ *  - after N clean approvals of a reversible signature the gate both SUGGESTS a grant on the bus AND
+ *    forms a learned auto-allow tier (isLearned) so a proven-safe reversible action stops nagging.
  *
  * ponytail: signature = tool name (mirrors the §11d graduation target) — the laziest stable unit.
  * Upgrade to a finer key (shell program, path) if one tool needs per-argument grants.
@@ -68,19 +69,50 @@ export class DecisionStore {
     return out.reverse().slice(0, limit);
   }
 
-  /** True once a reversible signature has N consecutive clean approvals (a deny breaks the run) and
-   * is not already granted — the single moment the gate should suggest auto-approval. */
-  shouldSuggest(actionClass: ActionClass, signature: string): boolean {
-    if (NEVER_WITHOUT_ASKING.has(actionClass)) return false; // floor classes never graduate
-    if (this.isGranted(actionClass, signature)) return false; // already auto-approved
+  /** Are the most recent decisions for this signature an unbroken run of ≥threshold allows?
+   * (list() is newest-first, so the first deny encountered breaks the streak.) */
+  private streakMet(actionClass: ActionClass, signature: string): boolean {
     let streak = 0;
     for (const e of this.list()) {
-      // newest first
       if (e.actionClass !== actionClass || e.signature !== signature) continue;
       if (!e.allowed) return false;
       if (++streak >= this.threshold) return true;
     }
     return false;
+  }
+
+  /** True once a reversible signature has N consecutive clean approvals (a deny breaks the run) and
+   * is not already granted — the single moment the gate should suggest auto-approval. */
+  shouldSuggest(actionClass: ActionClass, signature: string): boolean {
+    if (NEVER_WITHOUT_ASKING.has(actionClass)) return false; // floor classes never graduate
+    if (this.isGranted(actionClass, signature)) return false; // already auto-approved
+    return this.streakMet(actionClass, signature);
+  }
+
+  /** Learned auto-allow tier: a reversible signature whose newest N decisions are ALL allowed is
+   * promoted from the approval log itself — no manual grant needed. Floor classes can NEVER be
+   * learned (checked here AND the gate's floor block returns before this is ever consulted). */
+  isLearned(actionClass: ActionClass, signature: string): boolean {
+    if (NEVER_WITHOUT_ASKING.has(actionClass)) return false;
+    return this.streakMet(actionClass, signature);
+  }
+
+  /** Break a learned tier by recording a synthetic deny — the next same-signature ask must re-earn it. */
+  unlearn(actionClass: ActionClass, signature: string): void {
+    this.record({ ts: Date.now(), actionClass, signature, allowed: false });
+  }
+
+  /** Signatures currently auto-allowed purely from the approval log (the learned tier), for display. */
+  learnedList(): { actionClass: string; signature: string }[] {
+    const seen = new Set<string>();
+    const out: { actionClass: string; signature: string }[] = [];
+    for (const e of this.list()) {
+      const k = this.key(e.actionClass, e.signature);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (this.isLearned(e.actionClass, e.signature)) out.push({ actionClass: e.actionClass, signature: e.signature });
+    }
+    return out;
   }
 
   isGranted(actionClass: ActionClass, signature: string): boolean {
@@ -130,7 +162,7 @@ export class DecisionStore {
 export function registerDecisions(registry: Registry, store: DecisionStore): void {
   registry.register("vishu.decisions_list", (params) => {
     const limit = Number((params as { limit?: number } | undefined)?.limit) || 50;
-    return ok({ decisions: store.list(limit), grants: store.grantList() });
+    return ok({ decisions: store.list(limit), grants: store.grantList(), learned: store.learnedList() });
   });
   registry.register("vishu.autonomy_grant", (params) => {
     const p = params as { actionClass?: string; signature?: string } | undefined;
@@ -140,6 +172,8 @@ export function registerDecisions(registry: Registry, store: DecisionStore): voi
   registry.register("vishu.autonomy_revoke", (params) => {
     const p = params as { actionClass?: string; signature?: string } | undefined;
     if (!p?.actionClass || !p.signature || !ACTION_CLASSES.has(p.actionClass)) return err("invalid", "actionClass and signature required");
-    return ok(store.revoke(p.actionClass as ActionClass, p.signature));
+    const r = store.revoke(p.actionClass as ActionClass, p.signature);
+    store.unlearn(p.actionClass as ActionClass, p.signature); // also break a learned streak, so revoke undoes either kind
+    return ok(r);
   });
 }

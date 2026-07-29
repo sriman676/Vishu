@@ -30,7 +30,7 @@ export interface ApprovalDecision {
 /** Allowed → done (concerns when auto-allowed under a grant/graduation). Denied by hard policy
  * (pause/cap/always-ask) → blocked; denied at a prompt (or fail-closed no-UI) → needs_context. */
 function statusOf(d: ApprovalDecision): EscalationStatus {
-  if (d.allowed) return /granted|graduated/.test(d.reason ?? "") ? "concerns" : "done";
+  if (d.allowed) return /granted|graduated|learned/.test(d.reason ?? "") ? "concerns" : "done";
   return /pause|cap reached|always-ask/.test(d.reason ?? "") ? "blocked" : "needs_context";
 }
 
@@ -190,6 +190,10 @@ export class ApprovalGate {
     // Learned autonomy (Alfred ask→confirm→act): a signature the human explicitly granted auto-allows.
     // grant() refuses floor classes, so a grant is only ever a reversible one — this stays fail-closed.
     if (this.decisions?.isGranted(action, call.name)) return { allowed: true, reason: "auto-approved (granted)" };
+
+    // Learned tier: a reversible signature with N clean approvals in the log auto-allows itself — the
+    // floor block above already returned for send/spend/delete/change_setting, so this never touches them.
+    if (this.decisions?.isLearned(action, call.name)) return { allowed: true, reason: "auto-approved (learned)" };
 
     // Graduated (§11d): a risky command whose class earned an opted-in streak auto-allows.
     if (this.graduation?.isPromoted(action, call.name)) return { allowed: true, reason: "graduated" };

@@ -71,6 +71,47 @@ test("floor classes are never suggested and never grantable", async () => {
   assert.deepEqual(store.grant("send", "outreach_send"), { granted: false, reason: "send is always-ask" });
 });
 
+test("N clean approvals form a learned auto-allow tier without any manual grant", async () => {
+  const store = tmpStore();
+  let asks = 0;
+  const gate = new ApprovalGate("ask_every_time", async () => (asks++, true), {
+    actionOf: () => "write",
+    isPaused: () => false,
+    decisions: store,
+  });
+  const risky = () => call("run_shell", { command: "git push" }); // klass risky → reaches the ask path
+  for (let i = 0; i < 3; i++) await gate.decide(risky());
+  assert.equal(asks, 3, "asked the first three times");
+  const d = await gate.decide(risky());
+  assert.equal(d.allowed, true);
+  assert.equal(d.reason, "auto-approved (learned)");
+  assert.equal(asks, 3, "a learned signature is not asked again");
+  assert.deepEqual(store.learnedList(), [{ actionClass: "write", signature: "run_shell" }]);
+});
+
+test("floor classes never form a learned tier — send stays always-ask after any number of yeses", async () => {
+  const store = tmpStore();
+  let asks = 0;
+  const gate = new ApprovalGate("automatic", async () => (asks++, true), {
+    actionOf: (): ActionClass => "send",
+    isPaused: () => false,
+    decisions: store,
+  });
+  const c = () => call("outreach_send");
+  for (let i = 0; i < 5; i++) assert.equal((await gate.decide(c())).allowed, true);
+  assert.equal(asks, 5, "every send is asked, even after 5 clean approvals");
+  assert.equal(store.isLearned("send", "outreach_send"), false);
+  assert.deepEqual(store.learnedList(), []);
+});
+
+test("revoke/unlearn breaks a learned tier — it must be re-earned", () => {
+  const store = tmpStore();
+  for (let i = 0; i < 3; i++) store.record({ ts: i, actionClass: "write", signature: "x", allowed: true });
+  assert.equal(store.isLearned("write", "x"), true);
+  store.unlearn("write", "x");
+  assert.equal(store.isLearned("write", "x"), false);
+});
+
 test("decision log lists recent verdicts newest-first", () => {
   const store = tmpStore();
   store.record({ ts: 1, actionClass: "write", signature: "a", allowed: true });
