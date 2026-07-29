@@ -48,7 +48,7 @@ import { parseJobPosting, generateCoverLetter, type JobPosting } from "../career
 import { buildColdMail, renderDraft } from "../career/draft.js";
 import { registerCareer } from "../career/rpc.js";
 import { IdentityProfile } from "../personalization/profile.js";
-import { critiquePrompts } from "../personalization/critique.js";
+import { critiquePrompts, critiquePromptsCouncil } from "../personalization/critique.js";
 import { registerEvolve, registerProfile, registerTwin } from "../personalization/rpc.js";
 import { registerOrchestrationTools } from "../orchestration/tools.js";
 import { AgentFactory } from "../orchestration/factory.js";
@@ -641,9 +641,24 @@ async function serve(): Promise<number> {
   const evolver = new ProjectEvolver(join(config.paths.workspaceDir, "evolve.json"));
   // Cross-LLM self-improvement (item 4): only when a distinct 'reviewer' AI is assigned (so the critique
   // is genuinely cross-model, not self-review). Manual-trigger over vishu.evolve_critique — never on a cron.
-  const critic = roles.roles().includes("reviewer")
-    ? () => critiquePrompts(roles.for("reviewer"), roles.modelFor("reviewer") ?? config.provider.model)
-    : undefined;
+  // Council v2: assemble distinct models across the critic-capable roles so the critique is a
+  // multi-model consensus, not self-review. With ≥2 distinct models we run the council; with one we
+  // fall back to the original single-reviewer path. Still manual-trigger, still suggest-only.
+  const councilSeen = new Set<string>();
+  const council = [] as { model: string; provider: ReturnType<typeof roles.for> }[];
+  for (const r of ["reviewer", "judge", "builder"]) {
+    if (!roles.roles().includes(r)) continue;
+    const model = roles.modelFor(r) ?? config.provider.model;
+    if (councilSeen.has(model)) continue;
+    councilSeen.add(model);
+    council.push({ model, provider: roles.for(r) });
+  }
+  const critic =
+    council.length >= 2
+      ? () => critiquePromptsCouncil(council)
+      : roles.roles().includes("reviewer")
+        ? () => critiquePrompts(roles.for("reviewer"), roles.modelFor("reviewer") ?? config.provider.model)
+        : undefined;
   registerEvolve(registry, evolver, workflows, critic);
   registerTwin(registry, twin, workflows);
   registerProfile(registry, profile, twin);
