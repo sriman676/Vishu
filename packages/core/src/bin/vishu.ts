@@ -66,7 +66,7 @@ import { runEval } from "../eval/runner.js";
 import { makeRunners } from "../eval/runners.js";
 import { BUILTIN_SUITE } from "../eval/suite.js";
 import { loadSweBenchLite, runSweBench } from "../eval/swebench.js";
-import { buildPoolRouter, buildRouter } from "../providers/factory.js";
+import { buildPoolRouter, buildRouter, visionProvider } from "../providers/factory.js";
 import { AnthropicProvider } from "../providers/anthropic.js";
 import { OpenAICompatibleProvider } from "../providers/openai.js";
 import { ProviderError } from "../providers/types.js";
@@ -458,13 +458,17 @@ async function serve(): Promise<number> {
       } catch (e) {
         return `could not read image: ${(e as Error).message}`;
       }
-      const res = await router.chat({
+      // Vision goes straight to the local Ollama vision model — the pooled router would 400 on a cloud
+      // key or force-bind the text-only local model. Falls back to router.chat (text-only degrade) when
+      // no local vision endpoint is configured.
+      const req = {
         model: process.env.VISHU_VISION_MODEL ?? config.provider.model,
-        messages: [{ role: "user", content: a.prompt ? String(a.prompt) : "Describe this image.", images: [url] }],
+        messages: [{ role: "user" as const, content: a.prompt ? String(a.prompt) : "Describe this image.", images: [url] }],
         temperature: 0,
         maxTokens: 700,
-        category: "vision",
-      });
+        category: "vision" as const,
+      };
+      const res = await (visionProvider()?.chat(req) ?? router.chat(req));
       return res.content;
     },
   });

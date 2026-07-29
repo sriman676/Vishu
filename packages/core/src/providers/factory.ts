@@ -48,6 +48,16 @@ function localEndpoint(env = process.env): Provider | undefined {
   return env.VISHU_LOCAL_MODEL ? bindModel(ep, env.VISHU_LOCAL_MODEL) : ep;
 }
 
+/** Direct local vision endpoint for see_image. The pooled Router can't deliver a vision model to Ollama:
+ * failover tries a cloud key first (400s on an unknown model like `moondream`) and the local endpoint
+ * is force-bound to VISHU_LOCAL_MODEL (qwen3, text-only) — so vision must go straight to Ollama on its
+ * own model. Returns undefined unless both VISHU_LOCAL_BASE_URL and VISHU_VISION_MODEL are set (then the
+ * caller falls back to the main router — a clean text-only degrade). */
+export function visionProvider(env = process.env): Provider | undefined {
+  if (!env.VISHU_LOCAL_BASE_URL || !env.VISHU_VISION_MODEL) return undefined;
+  return bindModel(new OllamaProvider({ name: "ollama(vision)", baseUrl: env.VISHU_LOCAL_BASE_URL }), env.VISHU_VISION_MODEL);
+}
+
 /** Build a Router from one provider config: one endpoint per API key so failover/balance rotate keys.
  * Pass a UsageLog to capture per-call token usage; a Cassette to record/replay calls. */
 export function buildRouter(cfg: ProviderConfig, usageLog?: UsageLog, cassette?: Cassette, tracer?: Tracer): Router {
