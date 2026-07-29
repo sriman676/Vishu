@@ -40,8 +40,8 @@ plus the wider open-source PA field.
 | Obsidian-compatible vault | ✅ | ✅ | ➖ | ➖ |
 | Vector/hybrid memory recall | ✅ FTS+lexical+embedding | ✅ state.db | ➖ | ✅ layered |
 | **Local/offline model** | ✅ IPEX-LLM Ollama **live** — qwen3:4b + moondream on the Arc iGPU (2026-07-29) | ✅ Ollama | ⛔ cloud | ✅ |
-| Decision log + learned autonomy | ⚠️ gate+runlog (no learned tiers) | ✅ ask→confirm→act | ➖ | ➖ |
-| Knowledge-graph hygiene (contradiction/orphan repair) | ⚠️ `memory_selfheal` (partial) | ✅ | ➖ | ➖ |
+| Decision log + learned autonomy | ✅ log + learned auto-allow tier (N clean approvals promote a reversible signature; send/buy/delete stay always-ask) | ✅ ask→confirm→act | ➖ | ➖ |
+| Knowledge-graph hygiene (contradiction/orphan repair) | ✅ `memory_selfheal` — resolveConflicts + repairLinks (opt-in) | ✅ | ➖ | ➖ |
 | Rich record types (person/org/decision/daybook) | ✅ org/decision/daybook added (ba71820) | ✅ 12 types | ➖ | ➖ |
 | Background worker agents | ✅ pool: janitor/distiller/curator (b15c577) | ✅ curator/janitor/distiller | ➖ | ✅ agent mode |
 | Cross-LLM self-critique (human-gated) | ✅ `evolve_critique` (7b90810) | ⛔ | ➖ | ⛔ |
@@ -71,12 +71,15 @@ it as a lead-in-waiting, not a proven win.
    (6 exfil flags) and Qwen3-8B is **not installed**; a small local model has run
    ad-hoc but a council-grade local model is still missing. So the lane exists,
    the offline story is not yet fully matched to Alfred/Leon.
-3. **Decision records + autonomy hint** — every gated approval is logged; after N
-   approvals of the same action class Vishu *suggests* automating it (never
-   auto-sends: send/buy/delete stay always-ask, per the locked gate decision).
+3. **Decision records + learned autonomy** — every gated approval is logged; after
+   N clean approvals of a reversible signature the gate forms a *learned auto-allow
+   tier* (`isLearned`) so it stops nagging, and still *suggests* a durable grant on
+   the bus. send/buy/delete/change_setting stay always-ask (the learned tier and
+   grants both exclude the floor classes, per the locked gate decision).
 4. **Person/org records + knowledge-graph hygiene** — extract people/orgs from
-   inbound mail into linked records; extend self-heal to flag contradictions and
-   orphaned links.
+   inbound mail into linked records; self-heal now *repairs* as well as flags —
+   `resolveConflicts` drops stale same-subject duplicates, `repairLinks` unlinks
+   dangling `[[targets]]` in place (both opt-in).
 
 ## Backlogged (blocked or heavy, not this run)
 - **Calendar conflict/focus logic** — blocked on a real calendar token
