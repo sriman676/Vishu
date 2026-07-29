@@ -7,6 +7,13 @@ export interface OllamaConfig {
   baseUrl: string;
 }
 
+/** Ollama wants raw base64 image data; strip a `data:...;base64,` prefix if present. An http URL passes
+ * through unchanged (local vision expects base64/data URLs, so that simply won't resolve — a clean degrade). */
+export function stripDataUrl(url: string): string {
+  const comma = url.startsWith("data:") ? url.indexOf(",") : -1;
+  return comma >= 0 ? url.slice(comma + 1) : url;
+}
+
 /** Local Ollama adapter. ponytail: emit-once stream; NDJSON streaming is the upgrade path. */
 export class OllamaProvider implements Provider {
   readonly name: string;
@@ -29,7 +36,8 @@ export class OllamaProvider implements Provider {
         model: req.model,
         stream: false,
         ...(qwen ? { think: false } : {}),
-        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+        // Ollama vision (llava etc.): images ride a base64 `images[]` field on the message (no data: prefix).
+        messages: messages.map((m) => ({ role: m.role, content: m.content, ...(m.images?.length ? { images: m.images.map(stripDataUrl) } : {}) })),
         tools: req.tools?.map((t) => ({ type: "function", function: t })),
       }),
     });
