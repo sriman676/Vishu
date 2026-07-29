@@ -47,6 +47,7 @@ import { scoreResume } from "../career/score.js";
 import { parseJobPosting, generateCoverLetter, type JobPosting } from "../career/generate.js";
 import { buildColdMail, renderDraft } from "../career/draft.js";
 import { registerCareer } from "../career/rpc.js";
+import { imageToDataUrl } from "../modules/vision.js";
 import { IdentityProfile } from "../personalization/profile.js";
 import { critiquePrompts, critiquePromptsCouncil } from "../personalization/critique.js";
 import { registerEvolve, registerProfile, registerTwin } from "../personalization/rpc.js";
@@ -443,6 +444,30 @@ async function serve(): Promise<number> {
     });
     return res.content;
   };
+  // Multimodal: describe/answer about a local image or image URL via a vision model. Routes to
+  // VISHU_VISION_MODEL (fall back to the main model — degrades to text-only if it lacks vision).
+  tools.register({
+    name: "see_image",
+    meta: { action: "read" },
+    description: "Look at an image (local file path or http(s)/data: URL) and answer a question about it. Needs a vision-capable model on VISHU_VISION_MODEL (else falls back to the main model).",
+    parameters: { type: "object", properties: { path: { type: "string" }, prompt: { type: "string" } }, required: ["path"] },
+    run: async (a) => {
+      let url: string;
+      try {
+        url = imageToDataUrl(String(a.path ?? ""));
+      } catch (e) {
+        return `could not read image: ${(e as Error).message}`;
+      }
+      const res = await router.chat({
+        model: process.env.VISHU_VISION_MODEL ?? config.provider.model,
+        messages: [{ role: "user", content: a.prompt ? String(a.prompt) : "Describe this image.", images: [url] }],
+        temperature: 0,
+        maxTokens: 700,
+        category: "vision",
+      });
+      return res.content;
+    },
+  });
   // S3 (manual intake): structure a pasted job posting into {title, company, domain, description}.
   tools.register({
     name: "job_parse",
