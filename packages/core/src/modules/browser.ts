@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { withHeavy } from "../reliability/heavy.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import { registerBrowserTaskTools } from "./browsertask.js";
 import type { VishuModule } from "./registry.js";
 
 /** §11 browser automation lane (flag: `browser`) — the token-free universal actuator. Drives the user's
@@ -274,5 +275,6 @@ export const browserModule: VishuModule = {
   name: "browser",
   setup({ tools, workspaceDir }) {
     registerBrowserTools(tools, workspaceDir);
+    registerBrowserTaskTools(tools, workspaceDir); // reusable book/fill/confirm recipes → gated plans
   },
 };
