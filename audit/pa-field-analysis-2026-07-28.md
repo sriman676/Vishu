@@ -37,7 +37,7 @@ modular, scheduled automations — but not its breadth.
 | Real browser/computer use | ✅ real-Chrome, token-free | ✅ virtual computer | ✅ | ➖ | ✅ web nav | ✅ | ⚠️ Open Interpreter=code |
 | **Native OS / app-intent integration** | ⛔ web/Tauri app only | ⚠️ connectors | ✅ Android core | ✅ system-wide App Intents | ✅ Echo/home | ✅ M365 native | ⛔ |
 | **On-screen / ambient awareness** | ⛔ | ⚠️ | ✅ screen+notifs | ✅ onscreen | ✅ Omnisense sensors | ⚠️ | ⛔ |
-| **Multimodal (vision/camera/images)** | ⛔ text+voice | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| **Multimodal (vision/camera/images)** | ⚠️ `see_image` tool + all adapters vision-wired (2026-07-29); needs a vision model configured | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
 | Real-time natural voice | ⚠️ full-duplex built, HW-unverified | ✅ Advanced Voice | ✅ Live | ✅ | ✅ | ✅ | ✅ basic STT/TTS |
 | **Mobile app + phone push** | ⛔ desktop/web (msg channels only) | ✅ | ✅ | ✅ | ✅ app | ✅ | ⛔ |
 | **Wearable / always-on capture** | ⛔ | ➖ | ⚠️ Ray-Ban | ⚠️ Watch | ⚠️ | ➖ | ⛔ |
@@ -62,8 +62,10 @@ because they require being an OS vendor, a device maker, or a mobile-platform ow
    web/Tauri app + MCP — it can't read arbitrary app state or trigger system intents. **Biggest gap.**
 2. **On-screen & ambient awareness.** Gemini reads on-screen content + notifications; Siri has
    onscreen awareness; Alexa "Omnisense" uses room sensors. Vishu has zero screen/sensor input.
-3. **Multimodal (vision/camera/images).** Every big-tech PA sees images and screens. Vishu is
-   text + (unverified) voice only.
+3. ~~**Multimodal (vision/camera/images).**~~ **BUILT (2026-07-29):** `see_image` tool +
+   `modules/vision.ts` (`imageToDataUrl`) + vision serialization across every adapter (OpenAI/NIM/
+   OpenRouter parts, Ollama base64 `images[]`, Anthropic content-block base64/url). Routes to
+   `VISHU_VISION_MODEL`. Now ⚠️ (image *input* at parity; live camera/screen capture is still gap #2).
 4. **First-class mobile app + phone push.** All big-tech PAs live on the phone with native push.
    Vishu is desktop/web; it only reaches you via Telegram/Slack/SMS relays.
 5. **Wearable / always-on capture.** Limitless/Friend/Ray-Ban capture and remember real-world

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AnthropicProvider } from "./anthropic.js";
+import { AnthropicProvider, toAnthropicContent } from "./anthropic.js";
 
 /** Capture the request body a chat() call would POST, returning a canned Anthropic response. */
 function stubFetch(reply: unknown): { body: () => Record<string, unknown>; restore: () => void } {
@@ -20,6 +20,32 @@ test("anthropic: thinking budget is sent and max_tokens is floored above it", as
   f.restore();
   assert.deepEqual(f.body().thinking, { type: "enabled", budget_tokens: 4000 });
   assert.equal(f.body().max_tokens, 5024); // floored to budget + 1024, above the requested 1000
+});
+
+test("toAnthropicContent: text-only stays a string; images become base64/url image blocks", () => {
+  assert.equal(toAnthropicContent({ role: "user", content: "hi" }), "hi");
+  const parts = toAnthropicContent({
+    role: "user",
+    content: "what is this?",
+    images: ["data:image/png;base64,AAA", "https://x/a.jpg"],
+  });
+  assert.deepEqual(parts, [
+    { type: "text", text: "what is this?" },
+    { type: "image", source: { type: "base64", media_type: "image/png", data: "AAA" } },
+    { type: "image", source: { type: "url", url: "https://x/a.jpg" } },
+  ]);
+});
+
+test("anthropic: images ride into the request body as content blocks", async () => {
+  const f = stubFetch({ content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" });
+  const p = new AnthropicProvider({ baseUrl: "http://x", apiKey: "k" });
+  await p.chat({ model: "m", messages: [{ role: "user", content: "see", images: ["https://x/a.png"] }] });
+  f.restore();
+  const messages = f.body().messages as Array<{ content: unknown }>;
+  assert.deepEqual(messages[0].content, [
+    { type: "text", text: "see" },
+    { type: "image", source: { type: "url", url: "https://x/a.png" } },
+  ]);
 });
 
 test("anthropic: no thinking field when unset; thinking blocks are not surfaced as content/tool calls", async () => {

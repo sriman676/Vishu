@@ -1,11 +1,29 @@
 import { statusError } from "./transient.js";
-import type { ChatRequest, ChatResponse, OnDelta, Provider, ToolCall } from "./types.js";
+import type { ChatMessage, ChatRequest, ChatResponse, OnDelta, Provider, ToolCall } from "./types.js";
 
 export interface AnthropicConfig {
   name?: string;
   baseUrl: string;
   apiKey: string;
   version?: string;
+}
+
+/** Serialize a message for the Anthropic Messages API. With images it becomes a content-block array
+ * (text + image blocks: data: URLs → base64 source, http(s) URLs → url source); without, it stays a
+ * plain string so text-only calls are byte-identical to before. Exported for testing. */
+export function toAnthropicContent(m: ChatMessage): string | Array<Record<string, unknown>> {
+  if (!m.images?.length) return m.content;
+  const parts: Array<Record<string, unknown>> = [];
+  if (m.content) parts.push({ type: "text", text: m.content });
+  for (const url of m.images) {
+    const data = /^data:([^;]+);base64,(.*)$/.exec(url);
+    parts.push(
+      data
+        ? { type: "image", source: { type: "base64", media_type: data[1], data: data[2] } }
+        : { type: "image", source: { type: "url", url } },
+    );
+  }
+  return parts;
 }
 
 /** Native Anthropic Messages API adapter. ponytail: emit-once stream; real SSE is the upgrade path. */
@@ -19,7 +37,7 @@ export class AnthropicProvider implements Provider {
     const system = req.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n") || undefined;
     const messages = req.messages
       .filter((m) => m.role === "user" || m.role === "assistant")
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) => ({ role: m.role, content: toAnthropicContent(m) }));
 
     // Extended thinking (orchestrator/decision calls only). API requires max_tokens > budget_tokens.
     const budget = req.thinking?.budgetTokens;

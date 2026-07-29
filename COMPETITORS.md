@@ -1,8 +1,9 @@
 # Vishu vs. the PA-AI field (2026-07-12; honesty pass 2026-07-27; 2026-07-29 update)
 
-> **2026-07-29 update:** automatic silent memory (`memory/autolearn.ts`) and learned
-> proactivity (threshold→`suggest_schedule`) shipped — see `../audit/pa-field-analysis-2026-07-28.md`
-> gap #8 (now CLOSED) and #6 (behavior-learning WIP this session). The moat rows
+> **2026-07-29 update:** automatic silent memory (`memory/autolearn.ts`), learned
+> proactivity (threshold→`suggest_schedule`), and **multimodal image input** (`see_image`
+> tool + vision-wired OpenAI/Ollama/Anthropic adapters) shipped — see
+> `../audit/pa-field-analysis-2026-07-28.md` gap #8 (CLOSED) and #3 (now BUILT). The moat rows
 > (self-hosted ownership, provider-agnostic routing, gated cross-LLM self-critique, safety
 > surface) remain the field-wide wins.
 
@@ -45,6 +46,7 @@ plus the wider open-source PA field.
 | Background worker agents | ✅ pool: janitor/distiller/curator (b15c577) | ✅ curator/janitor/distiller | ➖ | ✅ agent mode |
 | Cross-LLM self-critique (human-gated) | ✅ `evolve_critique` (7b90810) | ⛔ | ➖ | ⛔ |
 | Browser actuator (real Chrome) | ✅ token-free lane | ➖ | ➖ | ➖ |
+| **Multimodal image input (vision)** | ⚠️ `see_image` all adapters wired (2026-07-29); needs a vision model | ⛔ | ⛔ | ⛔ |
 | Financial sidecar | ⛔ | ✅ Sure | ➖ | ➖ |
 | Kanban board UI | ✅ persistent drag board (e75f48a) | ✅ Plane | ✅ | ➖ |
 | Web UI | ✅ React/Tauri | ✅ Wasp | ✅ | ✅ |
