@@ -665,6 +665,12 @@ async function serve(): Promise<number> {
   const evolveTick = () => runEvolutionPass(evolver, config.paths.actionDir, bus);
   evolveTick(); // one pass at startup
   setInterval(evolveTick, 86_400_000).unref(); // daily; unref so it never holds the process open
+  // Proactivity v2: the twin learns when tasks recur; nudge (suggest-only) at the learned peak hour.
+  const anticipateTick = () => {
+    for (const task of twin.anticipate()) bus.publish({ domain: "proactivity", type: "suggest_schedule", payload: { task, reason: "anticipated" } });
+  };
+  anticipateTick(); // check once at startup
+  setInterval(anticipateTick, 3_600_000).unref(); // hourly; unref so it never holds the process open
   startResourceGuard(gate); // throttle background work under CPU load
   attachNotificationSink(bus); // surface trigger notifications (Phase 14 swaps in an OS toast)
   if (config.budgetUsd > 0) {
