@@ -35,18 +35,18 @@ plus the wider open-source PA field.
 | Calendar conflict/focus logic | ⛔ stub (needs cal token) | ✅ | ✅ | ➖ |
 | Messaging channels | ✅ Telegram/Slack/SMS | ✅ Telegram/Slack | ✅ SMS | ➖ |
 | 1000+ app integrations | ✅ Composio domain | ✅ Composio | ➖ | ➖ |
-| **Voice (STT + TTS + orb)** | ⚠️ **built (full-duplex + barge-in) — UNVERIFIED on mic HW** | ⛔ none | ⛔ none | ✅ STT/TTS |
+| **Voice (STT + TTS + orb)** | ✅ STT+TTS **proven live** (whisper.cpp + Piper round-trip, 2026-07-29); full-duplex/barge-in on branch, mic-latency HW-pending | ⛔ none | ⛔ none | ✅ STT/TTS |
 | Personas / modes | ✅ 4 modes + per-mode voice + switcher | ➖ profiles | ➖ | ➖ modes |
 | Obsidian-compatible vault | ✅ | ✅ | ➖ | ➖ |
 | Vector/hybrid memory recall | ✅ FTS+lexical+embedding | ✅ state.db | ➖ | ✅ layered |
-| **Local/offline model** | ⚠️ lane wired (`providers/ollama.ts`); IPEX-LLM install **vet-BLOCKED**, Qwen3 not installed | ✅ Ollama | ⛔ cloud | ✅ |
+| **Local/offline model** | ✅ IPEX-LLM Ollama **live** — qwen3:4b + moondream on the Arc iGPU (2026-07-29) | ✅ Ollama | ⛔ cloud | ✅ |
 | Decision log + learned autonomy | ⚠️ gate+runlog (no learned tiers) | ✅ ask→confirm→act | ➖ | ➖ |
 | Knowledge-graph hygiene (contradiction/orphan repair) | ⚠️ `memory_selfheal` (partial) | ✅ | ➖ | ➖ |
 | Rich record types (person/org/decision/daybook) | ✅ org/decision/daybook added (ba71820) | ✅ 12 types | ➖ | ➖ |
 | Background worker agents | ✅ pool: janitor/distiller/curator (b15c577) | ✅ curator/janitor/distiller | ➖ | ✅ agent mode |
 | Cross-LLM self-critique (human-gated) | ✅ `evolve_critique` (7b90810) | ⛔ | ➖ | ⛔ |
 | Browser actuator (real Chrome) | ✅ token-free lane | ➖ | ➖ | ➖ |
-| **Multimodal image input (vision)** | ⚠️ `see_image` all adapters wired (2026-07-29); needs a vision model | ⛔ | ⛔ | ⛔ |
+| **Multimodal image input (vision)** | ✅ `see_image` + all adapters; **moondream proven live** — reads images (2026-07-29) | ⛔ | ⛔ | ⛔ |
 | Financial sidecar | ⛔ | ✅ Sure | ➖ | ➖ |
 | Kanban board UI | ✅ persistent drag board (e75f48a) | ✅ Plane | ✅ | ➖ |
 | Web UI | ✅ React/Tauri | ✅ Wasp | ✅ | ✅ |
