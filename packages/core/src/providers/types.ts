@@ -12,6 +12,9 @@ export interface ChatMessage {
   toolCalls?: ToolCall[];
   toolCallId?: string; // set when role === "tool"
   name?: string;
+  /** Multimodal: image URLs (http(s) or data: URLs) attached to a user turn. Vision-capable providers
+   * serialize these into their image format; providers without vision ignore them and see text only. */
+  images?: string[];
 }
 
 export interface ToolSchema {

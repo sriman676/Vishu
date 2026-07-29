@@ -16,6 +16,17 @@ interface OAChoice {
   finish_reason?: string | null;
 }
 
+/** Serialize a message's content for the OpenAI/NIM/OpenRouter chat API. With images attached it becomes
+ * the multimodal parts array ([{type:text},{type:image_url}]); without, it stays a plain string so
+ * text-only calls are byte-identical to before. Exported for testing. */
+export function toOpenAIContent(m: ChatMessage): string | Array<Record<string, unknown>> {
+  if (!m.images?.length) return m.content;
+  const parts: Array<Record<string, unknown>> = [];
+  if (m.content) parts.push({ type: "text", text: m.content });
+  for (const url of m.images) parts.push({ type: "image_url", image_url: { url } });
+  return parts;
+}
+
 function toOpenAIMessage(m: ChatMessage): Record<string, unknown> {
   if (m.role === "tool") return { role: "tool", content: m.content, tool_call_id: m.toolCallId };
   if (m.role === "assistant" && m.toolCalls?.length) {
@@ -29,7 +40,7 @@ function toOpenAIMessage(m: ChatMessage): Record<string, unknown> {
       })),
     };
   }
-  return { role: m.role, content: m.content };
+  return { role: m.role, content: toOpenAIContent(m) };
 }
 
 function parseToolCalls(raw: OAChoice["message"]): ToolCall[] | undefined {
