@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Registry } from "../transport/rpc.js";
+import { Terminal } from "../tools/terminal.js";
 import { registerAutofix } from "./rpc.js";
 
 test("vishu.autofix: a passing command verifies green without invoking the agent", async () => {
@@ -16,6 +17,9 @@ test("vishu.autofix: a passing command verifies green without invoking the agent
       agentCalls += 1;
       return "";
     },
+    // Hermetic: never containerize the validator — Docker-up CI runners would otherwise wrap
+    // `echo ok` in a docker run (image pull under --network none → 8-min hang → false).
+    makeTerminal: (dir) => new Terminal(dir),
   });
 
   const res = await reg.handle({ jsonrpc: "2.0", id: 1, method: "vishu.autofix", params: { command: "echo ok" } });

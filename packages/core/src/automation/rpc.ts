@@ -1,6 +1,6 @@
 import type { Autonomy } from "../reliability/approvals.js";
 import { shellValidator } from "../reliability/verify.js";
-import { sandboxedTerminal } from "../tools/terminal.js";
+import { type Terminal, sandboxedTerminal } from "../tools/terminal.js";
 import type { EventBus } from "../transport/events.js";
 import { err, ok, type Registry } from "../transport/rpc.js";
 import { autoFixPass } from "./autofix.js";
@@ -34,6 +34,9 @@ export interface AutofixDeps {
   /** Performs the fix — an agent turn handed the failure output. */
   runAgent: (prompt: string) => Promise<string>;
   bus?: EventBus;
+  /** Terminal factory — defaults to the auto-sandboxed one; tests inject a hermetic `new Terminal(dir)`
+   * so the validator command doesn't containerize (Docker-up runners would otherwise pull an image). */
+  makeTerminal?: (cwd: string) => Terminal;
 }
 
 /** Expose the backend error auto-fix loop over `vishu.autofix` — its poke source (a manual RPC call, or
@@ -44,7 +47,7 @@ export function registerAutofix(registry: Registry, deps: AutofixDeps): void {
     const p = (params ?? {}) as { command?: string; maxAttempts?: number };
     if (!p.command) return err("invalid_params", "command is required");
     const command = p.command;
-    const terminal = sandboxedTerminal(deps.actionDir);
+    const terminal = (deps.makeTerminal ?? sandboxedTerminal)(deps.actionDir);
     try {
       const result = await autoFixPass({
         validator: shellValidator(terminal, command),
