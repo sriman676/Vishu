@@ -1,4 +1,10 @@
-# Vishu vs. the PA-AI field (2026-07-12; honesty pass 2026-07-27)
+# Vishu vs. the PA-AI field (2026-07-12; honesty pass 2026-07-27; 2026-07-29 update)
+
+> **2026-07-29 update:** automatic silent memory (`memory/autolearn.ts`) and learned
+> proactivity (threshold→`suggest_schedule`) shipped — see `../audit/pa-field-analysis-2026-07-28.md`
+> gap #8 (now CLOSED) and #6 (behavior-learning WIP this session). The moat rows
+> (self-hosted ownership, provider-agnostic routing, gated cross-LLM self-critique, safety
+> surface) remain the field-wide wins.
 
 > **2026-07-27 correction:** the voice and local-model rows below were downgraded
 > from ✅ to ⚠️ — voice is built but unverified on mic HW, and the IPEX-LLM local

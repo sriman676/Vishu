@@ -31,8 +31,8 @@ modular, scheduled automations — but not its breadth.
 | Capability | Vishu | ChatGPT | Gemini | Siri/Apple | Alexa+ | Copilot | Khoj/Leon |
 |---|---|---|---|---|---|---|---|
 | Persistent cross-session memory | ✅ vault + hybrid recall + self-heal | ✅ auto | ✅ auto | ✅ personal context | ✅ | ✅ Work IQ (Nov'26) | ✅ |
-| **Automatic/silent memory inference** | ⚠️ explicit + twin | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
-| Proactive / anticipatory (behavior-driven) | ⚠️ cron+triggers, rule-based | ✅ Tasks | ✅ Proactive Assist | ✅ | ✅ Daily Insights | ✅ autopilots | ⚠️ schedules |
+| **Automatic/silent memory inference** | ✅ `autolearn.ts` (silent per-turn) + twin | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| Proactive / anticipatory (behavior-driven) | ⚠️ triggers + threshold-suggest (behavior-learning WIP) | ✅ Tasks | ✅ Proactive Assist | ✅ | ✅ Daily Insights | ✅ autopilots | ⚠️ schedules |
 | Agentic end-to-end task (book/buy/forms) | ⚠️ browser actuator, not productized | ✅ Agent VM | ✅ | ✅ App Actions | ✅ Uber/OpenTable | ✅ agent mode | ⚠️ |
 | Real browser/computer use | ✅ real-Chrome, token-free | ✅ virtual computer | ✅ | ➖ | ✅ web nav | ✅ | ⚠️ Open Interpreter=code |
 | **Native OS / app-intent integration** | ⛔ web/Tauri app only | ⚠️ connectors | ✅ Android core | ✅ system-wide App Intents | ✅ Echo/home | ✅ M365 native | ⛔ |
@@ -77,8 +77,9 @@ because they require being an OS vendor, a device maker, or a mobile-platform ow
 7. **Productized end-to-end agentic tasks.** Vishu has a real-Chrome actuator but no hardened
    "book the reservation, fill the form, confirm to phone" flow like Alexa+/ChatGPT Agent. The
    substrate exists; the reliability + task library don't.
-8. **Automatic silent memory inference.** Rivals store memories with no user effort; Vishu leans
-   on explicit writes + the twin's repeated-prompt capture. Could auto-infer during turns.
+8. ~~**Automatic silent memory inference.**~~ **CLOSED (2026-07-28, `memory/autolearn.ts`):** a
+   zero-token regex gate fronts one cheap classifier call that silently extracts + stores durable
+   facts per turn (fire-and-forget, restated facts supersede). Now at field parity.
 9. **Verified real-time voice.** Full-duplex + barge-in are *built* but unproven on mic HW; the
    latency/quality bar set by ChatGPT Advanced Voice / Gemini Live is unmet until HW-tested.
 10. **Local council-grade model.** The local lane is wired but IPEX-LLM is vet-blocked and no
