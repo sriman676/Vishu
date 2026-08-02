@@ -76,6 +76,17 @@ export const KNOWN_MCP: Record<string, DomainConfig> = {
     reconnect: false,
     egressHosts: ["api.firecrawl.dev"],
   },
+  // block/buzz (Apache-2.0): self-hosted Nostr-relay workspace for humans+agents; its `buzz-acp` harness
+  // speaks MCP/ACP. buzz is a Rust monorepo (needs `just build`), not an npx package — so this is a gated
+  // stub, inert until VISHU_BUZZ_ACP points at the built buzz-acp binary. Then `vishu connect buzz` mounts
+  // it. ponytail: env-path cmd, no hardcoded clone dir; confirm buzz-acp's stdio flags before first enable.
+  buzz: {
+    id: "buzz",
+    cmd: process.env.VISHU_BUZZ_ACP ?? "buzz-acp",
+    requireEnv: "VISHU_BUZZ_ACP",
+    reconnect: false,
+    egressHosts: ["localhost", "127.0.0.1"],
+  },
 };
 
 export type ConnectVia = "known" | "composio";
