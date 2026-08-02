@@ -1,20 +1,30 @@
 <div align="center">
   <img src="assets/logo.svg" width="96" height="96" alt="Vishu logo" />
   <h1>Vishu</h1>
-  <p><strong>The coding agent that never hits a rate limit.</strong></p>
-  <p>One interface over every provider you have keys for. When one 429s, Vishu fails over; when you have work to spread, it load-balances across keys in parallel. Your laptop's local model is just another key in the ring.</p>
+  <p><strong>A local-first personal-assistant AI that never hits a rate limit.</strong></p>
+  <p>Pool every provider key you have — plus your laptop's own model — into one ring. One 429 and it fails over to the next. Vision, voice, memory, and a two-way MCP gateway make it do real work; coding and job-hunting are just two of the things it does.</p>
   <p>
-    <img alt="tests" src="https://img.shields.io/badge/tests-152%20passing-brightgreen">
+    <img alt="tests" src="https://img.shields.io/badge/tests-458%20passing-brightgreen">
     <img alt="node" src="https://img.shields.io/badge/node-%E2%89%A524-blue">
     <img alt="license" src="https://img.shields.io/badge/license-MIT-green">
+  </p>
+  <p>
+    <a href="brag-output/brag.mp4"><img src="brag-output/brag.jpg" width="720" alt="Vishu — 20s launch video (click to play)" /></a><br/>
+    <sub><a href="brag-output/brag.mp4">▶ Watch the 20-second tour</a></sub>
   </p>
 </div>
 
 ---
 
-## Why Vishu
+## What Vishu is
 
-Every other agent is married to one vendor. Hit the limit and you wait, or you pay for a higher tier, or you stop. Vishu treats your providers as a **pool**: paste the keys you already have — Anthropic, OpenAI, a Gemini free tier, Groq, a local Ollama — and it routes across them.
+Vishu is a **personal-assistant AI you run yourself**. Talk to it, hand it a task, and it delivers finished work — gating anything consequential behind your approval. It sees images, listens and speaks, remembers in plain markdown you own, and connects to any app through MCP. Writing code and applying to jobs are *capabilities*, not the product.
+
+The one thing it refuses to do is stall on a rate limit.
+
+## The wedge: it never hits a rate limit
+
+Every other agent is married to one vendor. Hit the limit and you wait, pay for a higher tier, or stop. Vishu treats your providers as a **pool**: paste the keys you already have — Anthropic, OpenAI, a Gemini free tier, Groq, a local Ollama — and it routes across them.
 
 ```bash
 VISHU_API_KEYS=sk-ant-…,sk-…,gsk_…   VISHU_KEY_MODE=balance
@@ -24,18 +34,27 @@ VISHU_API_KEYS=sk-ant-…,sk-…,gsk_…   VISHU_KEY_MODE=balance
 - **`balance`** — round-robin every call, so a multi-agent burst spreads across keys instead of hammering one 429.
 - **`local`** — prefer a local LLM when present; fold it in with `VISHU_LOCAL_BASE_URL=http://127.0.0.1:11434`.
 
-That's the wedge. The rest of Vishu exists to make a never-throttled agent actually trustworthy:
+## What it can do
 
-**Memory you own.** A plaintext, Obsidian-editable markdown vault is the source of truth; the SQLite vector/FTS index is derived and rebuildable. Edit a note by hand, delete the index — nothing is locked in a proprietary store.
-
-**Software it verifies, not vibes.** `vishu build` runs a spec interview → your approval → a chunked multi-agent build → a **deterministic** OWASP Top-10 scan → a maintainability gate. Security gates on a real scanner, **never** on an LLM grading its own work.
+- **Local model, offline.** GPU-offloaded IPEX-LLM Ollama on an Intel Arc iGPU — the local model is just another key in the ring, no cloud required.
+- **Live vision.** Point `see_image` at a picture and a local vision model (moondream) describes it — verified working fully offline.
+- **Voice.** Streaming STT (whisper.cpp) + TTS (Piper) with barge-in, behind the `voice` module.
+- **Bidirectional MCP gateway.** Vishu is both an MCP *client* (mount any server) and an MCP *server* (`vishu mcp-serve` re-exposes it to other agents). `vishu connect <app>` mounts a new capability in one command (see below).
+- **Memory you own.** A plaintext, Obsidian-editable markdown vault is the source of truth; the SQLite vector/FTS index is derived and rebuildable. Edit a note by hand, delete the index — nothing is locked in a proprietary store.
+- **Software it verifies, not vibes.** `vishu build` runs a spec interview → your approval → a chunked multi-agent build → a **deterministic** OWASP Top-10 scan → a maintainability gate. Security gates on a real scanner, **never** on an LLM grading its own work.
 
 ## Quickstart
 
-One command — Windows / Linux / macOS, only Node ≥ 24 required (it provisions pnpm via corepack):
+**Windows — one click:**
+
+```powershell
+./install.ps1     # checks Node ≥ 24, provisions pnpm, installs, builds, writes .env
+```
+
+**Any OS:**
 
 ```bash
-node setup.mjs            # or: npm run setup
+node setup.mjs            # or: npm run setup — provisions pnpm via corepack
 cp .env.example .env      # paste a key into VISHU_API_KEY
 ```
 
@@ -46,6 +65,17 @@ pnpm vishu build "a todo app with auth"      # guided secure build
 ```
 
 > Windows PowerShell sets env vars with `$env:VISHU_API_KEY="…"`, not `export`.
+
+### Connect an app
+
+Everything Vishu touches beyond your keys is an MCP mount. Add one in a command:
+
+```bash
+pnpm vishu connect github        # a known MCP by name
+pnpm vishu connect gmail         # any app name → routed through Composio (1000+ apps, one key)
+pnpm vishu connect foo --cmd "npx -y some-mcp-server"   # a custom stdio server
+pnpm vishu mcp-serve             # expose Vishu itself as an MCP to other agents
+```
 
 ### Just paste a key — the provider is auto-detected
 

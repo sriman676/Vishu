@@ -1,0 +1,1 @@
+Meet Vishu — a local-first personal-assistant AI that never hits a rate limit. Pool every provider key plus your laptop's own model into one ring: one 429 and it just fails over to the next. Local vision, voice, and a bidirectional MCP gateway, all verified by 458 tests, 0 failing. MIT.

@@ -35,3 +35,8 @@ packages/core/sidecar/voice-models/
 .playwright-mcp/
 nim-models.json
 keys-health.json
+
+# /brag: keep the delivered mp4/jpg/share-copy, ignore the regenerable Hyperframes source
+brag-output/composition/
+brag-output/brag-plan.md
+brag-output/composition-brief.md
