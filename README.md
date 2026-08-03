@@ -4,10 +4,22 @@
   <p><strong>A local-first personal-assistant AI that never hits a rate limit.</strong></p>
   <p>Pool every provider key you have — plus your laptop's own model — into one ring. One 429 and it fails over to the next. Vision, voice, memory, and a two-way MCP gateway make it do real work; coding and job-hunting are just two of the things it does.</p>
   <p>
-    <img alt="tests" src="https://img.shields.io/badge/tests-458%20passing-brightgreen">
+    <img alt="tests" src="https://img.shields.io/badge/tests-463%20passing-brightgreen">
     <img alt="node" src="https://img.shields.io/badge/node-%E2%89%A524-blue">
     <img alt="license" src="https://img.shields.io/badge/license-MIT-green">
+    <img alt="rate limits" src="https://img.shields.io/badge/rate%20limits-0-1f9c6b">
+    <img alt="local-first" src="https://img.shields.io/badge/local--first-offline%20capable-6f42c1">
+    <img alt="MCP" src="https://img.shields.io/badge/MCP-two--way%20gateway-blue">
   </p>
+
+  <!--
+    INLINE VIDEO (item 2a): to make the tour autoplay inline instead of a click-to-play poster —
+    1. open any GitHub issue in this repo, drag brag-output/brag.mp4 into the comment box
+    2. GitHub uploads it and gives you a https://github.com/user-attachments/assets/… URL
+    3. paste that URL into the src below, uncomment the <video> line, and delete the poster <a>…</a> block
+    GitHub autoplays user-attachment videos inline; the local-path poster below is the fallback until then.
+  -->
+  <!-- <video src="PASTE_USER_ATTACHMENTS_URL_HERE" width="720" autoplay loop muted playsinline></video> -->
   <p>
     <a href="brag-output/brag.mp4"><img src="brag-output/brag.jpg" width="720" alt="Vishu — 20s launch video (click to play)" /></a><br/>
     <sub><a href="brag-output/brag.mp4">▶ Watch the 20-second tour</a></sub>
