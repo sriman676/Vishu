@@ -88,3 +88,40 @@ it as a lead-in-waiting, not a proven win.
 - **Kanban board UI** — list panels cover it; a drag board is polish.
 - **Background worker pool (curator/janitor/distiller)** — overlaps with
   evolve/twin; revisit once the local model frees budget.
+
+---
+
+## OpenWorker (2026-08-03)
+
+`andrewyng/openworker` (MIT, Python, 11.9k★) is the closest *shape* match — a
+local-first, BYO-model agent that ships finished work, gates consequential
+actions, speaks MCP, and has a Tauri shell + voice sidecar. Full read-only
+compare: `../audit/openworker-vs-vishu-2026-08-03.md`. Honest verdict below —
+Vishu leads on every code-decided axis; **one gap remains and it is cert-gated,
+not a code gap.**
+
+| Axis | Vishu | OpenWorker |
+|---|---|---|
+| Throughput under rate limits | ✅ **key-ring** (`failover`/`balance`, local model = another key) — bench: **40/40** under a burst | ⛔ one client per provider from a single `api_key`; 429 = "slow down" — **10/40** |
+| Bidirectional MCP | ✅ client **+ server** (`mcp-serve`) | ⚠️ consumer only |
+| Connector breadth / LOC | ✅ Composio 1000+ behind one mount | ⚠️ ~25 hand-maintained + OAuth broker |
+| Local vision + voice | ✅ offline moondream vision + STT/TTS/barge-in | ⚠️ cloud vision; STT only |
+| Remote-trigger | ✅ `connectors_trigger` — **any channel, all mounted MCPs**, fail-closed allowlist | ✅ Slack `@mention → thread reply` |
+| Turnkey OAuth connect | ✅ `connect <app> --auth` (hosted Composio OAuth) | ✅ hosted OAuth broker |
+| **Signed/notarized distribution + auto-update** | ⛔ **`install.ps1`, run-from-source, unsigned** | ✅ notarized macOS + auto-update |
+
+✅ have · ⚠️ partial/one-directional · ⛔ missing
+
+**Where Vishu is decisively ahead:** throughput under rate limits — OpenWorker
+has no key-ring, so a burst or a 429 stalls it on the one key. Proven, not
+claimed: `npx tsx packages/core/src/reliability/ratelimit-bench.ts`.
+
+**The one gap Vishu has not closed:** signed/notarized distribution + auto-update.
+This is **not** a code gap — it needs a purchased code-signing certificate
+(Windows Authenticode ~$100–400/yr or an Apple Developer cert $99/yr), after
+which a signing step + update feed light it up. The release/signing machinery is
+a next-session build that stays inert until a real cert is supplied.
+
+**Do not copy OpenWorker's code** (MIT permits it, but its router has no
+key-ring — lifting it is a downgrade). Keep it a reference clone only
+(`D:\claude-tools\repos\openworker`).
