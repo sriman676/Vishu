@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, sep } from "node:path";
 import { checkBearer } from "./auth.js";
+import { handleSlackWebhook } from "../connectors/inbound-webhook.js";
 import type { EventBus } from "./events.js";
 import { type JsonRpcRequest, type Registry } from "./rpc.js";
 
@@ -91,6 +92,28 @@ export function startServer(registry: Registry, host: string, port: number, even
         res.flushHeaders(); // send headers now so clients connect before the first event (no deadlock)
         const off = eventBus.subscribe((e) => res.write(`data: ${JSON.stringify(e)}\n\n`));
         req.on("close", off);
+        return;
+      }
+
+      // Inbound vendor webhook receiver (Slack Events API). Authenticated by the vendor's *request
+      // signature*, not our bearer — the vendor can't send our loopback token. A verified user message
+      // runs the full agent via vishu.connectors_trigger (still fail-closed behind VISHU_TRIGGER_ALLOW).
+      // Off unless VISHU_WEBHOOK_SLACK_SECRET is set. Ack Slack fast (<3s) then run the agent async.
+      if (req.method === "POST" && req.url === "/webhook/slack") {
+        const secret = process.env.VISHU_WEBHOOK_SLACK_SECRET;
+        if (!secret) return send(404, { error: "slack webhook not configured" });
+        const hdr = (n: string) => { const v = req.headers[n]; return Array.isArray(v) ? v[0] : v; };
+        const result = handleSlackWebhook(
+          secret,
+          { "x-slack-request-timestamp": hdr("x-slack-request-timestamp"), "x-slack-signature": hdr("x-slack-signature") },
+          await readBody(req),
+        );
+        res.writeHead(result.status, { "content-type": "application/json", ...cors });
+        res.end(result.body);
+        if (result.trigger) {
+          // fire-and-forget: Slack needs a 200 within 3s but the agent is slow, so run it after acking.
+          void registry.handle({ jsonrpc: "2.0", id: 0, method: "vishu.connectors_trigger", params: result.trigger });
+        }
         return;
       }
 
