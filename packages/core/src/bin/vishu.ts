@@ -27,6 +27,7 @@ import { McpClient, type McpSampler, registerMcpTools } from "../connectors/mcp.
 import { DomainManager, KNOWN_MCP, type DomainConfig, loadDomains, resolveConnect, upsertDomain } from "../connectors/domains.js";
 import { authPlan } from "../connectors/composio-auth.js";
 import { spawnSync } from "node:child_process";
+import { checkUpdate } from "../update/version.js";
 import { loadRepoAdapters, registerAdapterTools, toDomainConfigs } from "../connectors/repoadapter.js";
 import { WebhookConnector } from "../connectors/webhook.js";
 import { StubMailConnector } from "../connectors/daily.js";
@@ -288,6 +289,22 @@ function parseWebhooks(env = process.env): Record<string, string> {
 function usageErr(usage: string): number {
   process.stderr.write(`usage: ${usage}\n`);
   return 1;
+}
+
+/** `vishu update [--check]` — compare the running version to the published release manifest
+ * (dist/latest.json, built by scripts/release.ps1). Run-from-source, so "update" = git pull; this just
+ * reports whether a newer build exists. Needs VISHU_UPDATE_URL pointing at the hosted manifest. */
+async function updateCmd(): Promise<number> {
+  const url = process.env.VISHU_UPDATE_URL;
+  if (!url) return usageErr("set VISHU_UPDATE_URL to a release manifest (latest.json) to check for updates");
+  try {
+    const s = await checkUpdate(url, version());
+    process.stdout.write(s.updateAvailable ? `update available: ${s.current} -> ${s.latest}\nrun 'git pull && pwsh ./install.ps1' to update\n` : `up to date (${s.current})\n`);
+    return 0;
+  } catch (e) {
+    process.stderr.write(`${(e as Error).message}\n`);
+    return 1;
+  }
 }
 
 /** Token ledger under the private workspace — every command's model calls funnel through it. */
@@ -1113,6 +1130,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "keys") return keysCmd(argv.slice(1));
   if (cmd === "connect") return connectCmd(argv.slice(1));
   if (cmd === "mcp-serve") return mcpServe(argv.slice(1));
+  if (cmd === "update") return updateCmd();
   if (cmd === "report") return report(argv[1]);
   if (cmd === "ledger") return ledger(argv[1]);
   if (cmd === "eval") return argv[1] === "swebench" ? sweBenchCmd(argv.slice(2)) : evalCmd(argv[1]);
@@ -1145,6 +1163,7 @@ async function main(argv: string[]): Promise<number> {
       "  vishu rpc <method> [json]    call a method on a running core",
       "  vishu connect <name> [--list]  mount a downstream MCP (browser|github|composio|custom) into the gateway",
       "  vishu connect <app> --auth     turnkey Composio OAuth: opens the link, waits until connected",
+      "  vishu update [--check]         compare the running build to VISHU_UPDATE_URL's release manifest",
       "  vishu mcp-serve [--http [port]]  expose Vishu's tools as an MCP server (stdio, or HTTP :8848)",
       "  vishu keys [--probe]         show the discovered provider-key pool + tier routing (probe = liveness)",
       "",
