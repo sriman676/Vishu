@@ -83,6 +83,7 @@ Everything Vishu touches beyond your keys is an MCP mount. Add one in a command:
 ```bash
 pnpm vishu connect github        # a known MCP by name
 pnpm vishu connect gmail         # any app name → routed through Composio (1000+ apps, one key)
+pnpm vishu connect gmail --auth  # turnkey: opens the OAuth link, waits until it's connected
 pnpm vishu connect foo --cmd "npx -y some-mcp-server"   # a custom stdio server
 pnpm vishu mcp-serve             # expose Vishu itself as an MCP to other agents
 ```

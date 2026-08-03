@@ -25,6 +25,8 @@ import { registerMeeting } from "../connectors/meeting.js";
 import { LocalConnector } from "../connectors/local.js";
 import { McpClient, type McpSampler, registerMcpTools } from "../connectors/mcp.js";
 import { DomainManager, KNOWN_MCP, type DomainConfig, loadDomains, resolveConnect, upsertDomain } from "../connectors/domains.js";
+import { authPlan } from "../connectors/composio-auth.js";
+import { spawnSync } from "node:child_process";
 import { loadRepoAdapters, registerAdapterTools, toDomainConfigs } from "../connectors/repoadapter.js";
 import { WebhookConnector } from "../connectors/webhook.js";
 import { StubMailConnector } from "../connectors/daily.js";
@@ -175,12 +177,28 @@ function connectCmd(argv: string[]): number {
   const cwdOv = flag("--cwd");
   if (cwdOv) cfg.cwd = resolve(cwdOv);
   writeFileSync(domainsFile, `${JSON.stringify({ domains: upsertDomain(current, cfg) }, null, 2)}\n`);
-  const note = composioFallback
-    ? `\n"${name}" routes through Composio — set COMPOSIO_API_KEY and authorize ${name} there; its tools appear as composio__*.`
-    : "";
+  // Keyless-connect smoothing: `--auth` on a Composio-routed app launches the hosted OAuth handshake
+  // (print URL → wait for ACTIVE) so "connect X" is turnkey; degrades to the manual hint otherwise.
+  const viaComposio = composioFallback || name === "composio";
+  const plan = authPlan(name, argv.includes("--auth"), viaComposio);
+  const note = plan.run
+    ? ""
+    : plan.note
+      ? `\n${plan.note}`
+      : composioFallback
+        ? `\n"${name}" routes through Composio — set COMPOSIO_API_KEY and authorize ${name} there; its tools appear as composio__*.`
+        : "";
   process.stdout.write(
     `connected ${cfg.id} -> ${domainsFile}\nmounts on next 'vishu jarvis'${cfg.requireEnv ? ` (set ${cfg.requireEnv} first)` : ""}${note}\n`,
   );
+  if (plan.run) {
+    const r = spawnSync("py", [join(process.cwd(), "scripts", "composio-connect.py"), name], { stdio: "inherit" });
+    if (r.error) {
+      process.stderr.write(`could not launch Python (py): ${r.error.message}\n`);
+      return 1;
+    }
+    return r.status ?? 1;
+  }
   return 0;
 }
 
@@ -1126,6 +1144,7 @@ async function main(argv: string[]): Promise<number> {
       "  vishu eval swebench [--limit N] [--file f] [--out p]   SWE-bench Lite: write predictions.jsonl",
       "  vishu rpc <method> [json]    call a method on a running core",
       "  vishu connect <name> [--list]  mount a downstream MCP (browser|github|composio|custom) into the gateway",
+      "  vishu connect <app> --auth     turnkey Composio OAuth: opens the link, waits until connected",
       "  vishu mcp-serve [--http [port]]  expose Vishu's tools as an MCP server (stdio, or HTTP :8848)",
       "  vishu keys [--probe]         show the discovered provider-key pool + tier routing (probe = liveness)",
       "",
