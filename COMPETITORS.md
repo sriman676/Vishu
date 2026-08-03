@@ -95,8 +95,7 @@ it as a lead-in-waiting, not a proven win.
 
 `andrewyng/openworker` (MIT, Python, 11.9k★) is the closest *shape* match — a
 local-first, BYO-model agent that ships finished work, gates consequential
-actions, speaks MCP, and has a Tauri shell + voice sidecar. Full read-only
-compare: `../audit/openworker-vs-vishu-2026-08-03.md`. Honest verdict below —
+actions, speaks MCP, and has a Tauri shell + voice sidecar. Honest verdict below —
 Vishu leads on every code-decided axis; **one gap remains and it is cert-gated,
 not a code gap.**
 
