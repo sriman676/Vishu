@@ -718,7 +718,7 @@ async function serve(): Promise<number> {
     if (gmail.configured) process.stdout.write("[email] Gmail SMTP connector active (app password)\n");
   }
   for (const c of tokenChannels()) connectors.set(c.channel, c); // §11h(ii): telegram/slack/sms when tokens set
-  registerConnectors(registry, { router, model: config.provider.model, memory, bus, runLog: new RunLog(), voice: profile.render() }, connectors);
+  registerConnectors(registry, { router, model: config.provider.model, memory, bus, runLog: new RunLog(), voice: profile.render(), runAgent: async (prompt) => (await agentService.startTurn(undefined, prompt)).final }, connectors);
   registerMeeting(registry, { router, model: config.provider.model, memory }); // §12e meeting agent: transcript→summary (live-join owed)
   // §12c inbound: scheduled multi-connector auto-fetch. Each enabled source (Gmail POP3, watched folder,
   // …) polls on its interval → daily-driver. Per-source on/off via VISHU_SYNC_<NAME>, interval via

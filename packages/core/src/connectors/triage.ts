@@ -40,6 +40,9 @@ export interface InboundDeps {
   runLog?: RunLog;
   /** Rendered identity profile so reply drafts sound like the user ("in your voice"). Optional. */
   voice?: string;
+  /** Run the full agent (every mounted MCP tool) for a remote-trigger message; returns the final
+   * reply. Absent = the `connectors_trigger` RPC reports unsupported. */
+  runAgent?: (prompt: string) => Promise<string>;
 }
 
 /** Inbound pipeline: triage → record a task/info note in the vault (skip is dropped) → notify on
