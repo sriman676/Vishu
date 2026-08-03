@@ -34,6 +34,16 @@ VISHU_API_KEYS=sk-ant-…,sk-…,gsk_…   VISHU_KEY_MODE=balance
 - **`balance`** — round-robin every call, so a multi-agent burst spreads across keys instead of hammering one 429.
 - **`local`** — prefer a local LLM when present; fold it in with `VISHU_LOCAL_BASE_URL=http://127.0.0.1:11434`.
 
+**Proof, not a slogan.** A burst of 40 concurrent calls against keys that 429 past their quota — a single client (one key, the shape every other agent ships) vs. Vishu's ring:
+
+| Runner | Completed under the burst |
+|---|---|
+| single client (no ring) | 10 / 40 — stalls the moment the key throttles |
+| Vishu `failover` | **40 / 40** — rotates off each 429 through the ring |
+| Vishu `balance` | **40 / 40** — spreads the burst across keys |
+
+Deterministic, no keys or network required: `npx tsx packages/core/src/reliability/ratelimit-bench.ts`.
+
 ## What it can do
 
 - **Local model, offline.** GPU-offloaded IPEX-LLM Ollama on an Intel Arc iGPU — the local model is just another key in the ring, no cloud required.
