@@ -100,6 +100,8 @@ pnpm vishu connect foo --cmd "npx -y some-mcp-server"   # a custom stdio server
 pnpm vishu mcp-serve             # expose Vishu itself as an MCP to other agents
 ```
 
+**Trigger it remotely.** Set `VISHU_WEBHOOK_SLACK_SECRET` (your Slack app's Signing Secret) and point the app's Event Subscriptions URL at `https://<host>/webhook/slack`. A message from an allowed sender runs the *full* agent — every mounted MCP — and replies in-thread. Fail-closed: nothing runs unless the sender is in `VISHU_TRIGGER_ALLOW`, and the request must carry a valid Slack signature.
+
 ### Just paste a key — the provider is auto-detected
 
 Leave `VISHU_PROVIDER` unset and Vishu reads the provider off the key prefix:
