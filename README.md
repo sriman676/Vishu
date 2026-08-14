@@ -12,18 +12,10 @@
     <img alt="MCP" src="https://img.shields.io/badge/MCP-two--way%20gateway-blue">
   </p>
 
-  <!--
-    INLINE VIDEO (item 2a): to make the tour autoplay inline instead of a click-to-play poster —
-    1. open any GitHub issue in this repo, drag brag-output/brag.mp4 into the comment box
-    2. GitHub uploads it and gives you a https://github.com/user-attachments/assets/… URL
-    3. paste that URL into the src below, uncomment the <video> line, and delete the poster <a>…</a> block
-    GitHub autoplays user-attachment videos inline; the local-path poster below is the fallback until then.
-  -->
-  <!-- <video src="PASTE_USER_ATTACHMENTS_URL_HERE" width="720" autoplay loop muted playsinline></video> -->
-  <p>
-    <a href="brag-output/brag.mp4"><img src="brag-output/brag.jpg" width="720" alt="Vishu — 20s launch video (click to play)" /></a><br/>
-    <sub><a href="brag-output/brag.mp4">▶ Watch the 20-second tour</a></sub>
-  </p>
+  <video src="https://github.com/sriman676/Vishu/releases/download/v0.1.0/brag.mp4" poster="brag-output/brag.jpg" width="720" controls autoplay loop muted playsinline>
+    <a href="https://github.com/sriman676/Vishu/releases/download/v0.1.0/brag.mp4"><img src="brag-output/brag.jpg" width="720" alt="Vishu — 20s launch video (click to play)" /></a>
+  </video>
+  <p><sub><a href="https://github.com/sriman676/Vishu/releases/download/v0.1.0/brag.mp4">▶ Watch the 20-second tour</a></sub></p>
 </div>
 
 ---
